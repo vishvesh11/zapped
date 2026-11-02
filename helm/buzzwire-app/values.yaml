@@ -1,5 +1,5 @@
 image:
-  repository: ghcr.io/vishvesh11/diwali-buzzwire/buzzwire-app
+  repository: ghcr.io/vishvesh11/zapped/buzzwire-app
   tag: latest
   pullPolicy: Always
 
