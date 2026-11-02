@@ -26,3 +26,34 @@ ingress:
   host: "diwaligame.vishvesh.me"
   annotations:
     external-dns.alpha.kubernetes.io/target: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+replicaCount: 1
+
+# Required by _helpers.tpl to generate resource names
+nameOverride: ""
+fullnameOverride: ""
+
+# Required by hpa.yaml (will crash if autoscaling block is missing)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+# Required by deployment.yaml (even if left empty)
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
