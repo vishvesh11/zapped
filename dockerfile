@@ -17,6 +17,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/main.py .
+COPY backend/templates/ ./templates/
 
 # Environment defaults for k3s
 ENV PORT=8000 \
