@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # Required for ReadWriteOnce PVC and in-memory game state
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: buzzwire
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PHONE_SNAPSHOT_URL
+              value: {{ .Values.env.phoneSnapshotUrl | quote }}
+            - name: S3_ENDPOINT
+              value: {{ .Values.env.s3Endpoint | quote }}
+            - name: S3_REGION
+              value: {{ .Values.env.s3Region | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.env.s3Bucket | quote }}
+            - name: GAME_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.existingSecret }}
+                  key: game-api-key
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.existingSecret }}
+                  key: s3-access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.existingSecret }}
+                  key: s3-secret-key
+          volumeMounts:
+            - name: sqlite-data
+              mountPath: /app/data
+      volumes:
+        - name: sqlite-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-db-pvc

@@ -1,0 +1,25 @@
+image:
+  repository: ghcr.io/vishvesh11/diwali-buzzwire/buzzwire-app
+  tag: latest
+  pullPolicy: Always
+
+imagePullSecrets: []
+  # - name: ghcr-secret  # Uncomment if the repo is private
+
+storage:
+  size: 1Gi
+  storageClassName: "" # Uses default k3s local-path provisioner
+
+env:
+  phoneSnapshotUrl: "http://100.64.0.15:8080/shot.jpg"
+  s3Endpoint: "https://s3.vishvesh.me"
+  s3Region: "garage"
+  s3Bucket: "buzzwire-zaps"
+  existingSecret: "buzzwire-secrets" # Holds GAME_API_KEY, S3_ACCESS_KEY, S3_SECRET_KEY
+
+ingress:
+  enabled: true
+  className: "traefik"
+  host: "diwaligame.vishvesh.me"
+  annotations:
+    external-dns.alpha.kubernetes.io/target: "" # Overridden in ArgoCD Application

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Buzz Wire — Admin Control Panel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6 font-sans">
+  <div class="max-w-3xl mx-auto space-y-6">
+
+    <!-- Top Bar & Audio Unlock -->
+    <div class="flex items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-xl">
+      <div>
+        <h1 class="text-xl font-bold text-amber-400">⚡ Stall Admin Control</h1>
+        <p class="text-xs text-slate-400">Laptop Speaker Chime & Session Manager</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <button id="audio-btn" onclick="unlockAudio()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-4 py-2 rounded-lg">
+          🔇 Click to Enable Laptop Audio
+        </button>
+        <button onclick="setApiKey()" class="bg-slate-800 hover:bg-slate-700 text-xs px-3 py-2 rounded-lg">
+          🔑 API Key
+        </button>
+      </div>
+    </div>
+
+    <!-- Arm New Player Session -->
+    <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
+      <h2 class="text-base font-semibold">1. Arm Player Session</h2>
+      <div class="flex gap-3">
+        <input id="player-name" type="text" maxlength="24" placeholder="Enter Player Name..."
+               class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-amber-400" />
+        <button onclick="startSession()" class="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-6 py-2.5 rounded-lg">
+          Arm Game
+        </button>
+        <button onclick="abortSession()" class="bg-rose-600/20 border border-rose-500/40 hover:bg-rose-600/30 text-rose-300 font-semibold px-4 py-2.5 rounded-lg">
+          Abort
+        </button>
+      </div>
+
+      <!-- Live Session Telemetry -->
+      <div class="grid grid-cols-4 gap-4 pt-3 border-t border-slate-800 text-center">
+        <div class="bg-slate-950 p-3 rounded-lg">
+          <div class="text-xs text-slate-400">Player</div>
+          <div id="st-player" class="text-lg font-bold text-white truncate">-</div>
+        </div>
+        <div class="bg-slate-950 p-3 rounded-lg">
+          <div class="text-xs text-slate-400">Phase</div>
+          <div id="st-phase" class="text-lg font-bold text-amber-400">IDLE</div>
+        </div>
+        <div class="bg-slate-950 p-3 rounded-lg">
+          <div class="text-xs text-slate-400">Touches (Faults)</div>
+          <div id="st-touches" class="text-2xl font-mono font-bold text-rose-400">0</div>
+        </div>
+        <div class="bg-slate-950 p-3 rounded-lg">
+          <div class="text-xs text-slate-400">Shocks Fired</div>
+          <div id="st-shocks" class="text-2xl font-mono font-bold text-amber-300">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hardware Mode Configuration -->
+    <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
+      <h2 class="text-base font-semibold">2. Game Mode & Hardware Settings</h2>
+      <div class="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-slate-800">
+        <div>
+          <div class="font-bold text-white">⚡ Electric Shock Mode</div>
+          <div class="text-xs text-slate-400">Toggle between Shock Mode and Shockless (Audio-only) Mode</div>
+        </div>
+        <button id="shock-toggle" onclick="toggleShock()" class="px-5 py-2 rounded-lg font-bold text-sm bg-slate-800 text-slate-300">
+          OFF (Shockless)
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let apiKey = localStorage.getItem('BUZZ_API_KEY') || '';
+    let shockEnabled = false;
+    const chime = new Audio('/public/media/chime.wav');
+
+    function headers() {
+      return { 'Content-Type': 'application/json', 'X-API-Key': apiKey };
+    }
+
+    function setApiKey() {
+      const k = prompt('Enter GAME_API_KEY (leave blank if unused):', apiKey);
+      if (k !== null) {
+        apiKey = k;
+        localStorage.setItem('BUZZ_API_KEY', apiKey);
+        loadConfig();
+      }
+    }
+
+    function unlockAudio() {
+      chime.play().then(() => {
+        chime.pause();
+        chime.currentTime = 0;
+        const btn = document.getElementById('audio-btn');
+        btn.innerText = '🔊 Laptop Audio Active';
+        btn.className = 'bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-lg';
+      }).catch(err => alert('Audio unlock failed: ' + err));
+    }
+
+    async function loadConfig() {
+      const res = await fetch('/api/v1/config', { headers: headers() });
+      if (!res.ok) return;
+      const cfg = await res.json();
+      renderConfig(cfg);
+    }
+
+    function renderConfig(cfg) {
+      shockEnabled = cfg.shock_enabled;
+      const btn = document.getElementById('shock-toggle');
+      if (shockEnabled) {
+        btn.innerText = '⚡ ON (SHOCK ACTIVE)';
+        btn.className = 'px-5 py-2 rounded-lg font-bold text-sm bg-amber-400 text-slate-950';
+      } else {
+        btn.innerText = 'OFF (Shockless Mode)';
+        btn.className = 'px-5 py-2 rounded-lg font-bold text-sm bg-slate-800 text-slate-300';
+      }
+    }
+
+    async function toggleShock() {
+      const res = await fetch('/api/v1/config', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ shock_enabled: !shockEnabled })
+      });
+      if (res.ok) renderConfig(await res.json());
+    }
+
+    async function startSession() {
+      const nameInput = document.getElementById('player-name');
+      const player_name = nameInput.value.trim();
+      if (!player_name) return alert('Enter a player name first');
+      const res = await fetch('/api/v1/session/start', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ player_name })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        return alert(err.detail || 'Error starting session');
+      }
+      nameInput.value = '';
+      renderSession(await res.json());
+    }
+
+    async function abortSession() {
+      const res = await fetch('/api/v1/session', { method: 'DELETE', headers: headers() });
+      if (res.ok) renderSession(await res.json());
+    }
+
+    function renderSession(s) {
+      document.getElementById('st-player').innerText = s.active ? s.player_name : '-';
+      document.getElementById('st-phase').innerText = s.active ? s.phase.toUpperCase() : 'IDLE';
+      document.getElementById('st-touches').innerText = s.touch_count || 0;
+      document.getElementById('st-shocks').innerText = s.shocks_fired || 0;
+    }
+
+    // Live SSE Listener for Instant Chime & Telemetry
+    const evt = new EventSource('/public/events/stream');
+    evt.addEventListener('play_chime', e => {
+      const data = JSON.parse(e.data);
+      chime.src = data.audio_url;
+      chime.currentTime = 0;
+      chime.play().catch(err => console.warn('Click Enable Audio button first:', err));
+    });
+    evt.addEventListener('session_update', e => renderSession(JSON.parse(e.data)));
+    evt.addEventListener('config_update', e => renderConfig(JSON.parse(e.data)));
+
+    loadConfig();
+    fetch('/public/session').then(r => r.json()).then(renderSession);
+  </script>
+</body>
+</html>
