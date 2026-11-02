@@ -7,7 +7,7 @@ on:
     paths:
       - "main.py"
       - "requirements.txt"
-      - "Dockerfile"
+      - "dockerfile"
       - "templates/**"
       - ".github/workflows/deploy.yaml"
   workflow_dispatch:
