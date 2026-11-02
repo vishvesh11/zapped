@@ -16,7 +16,7 @@ RUN mkdir -p /app/data /app/media
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+COPY backend/main.py .
 
 # Environment defaults for k3s
 ENV PORT=8000 \
