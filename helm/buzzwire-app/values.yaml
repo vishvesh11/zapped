@@ -57,3 +57,5 @@ podAnnotations: {}
 podLabels: {}
 podSecurityContext: {}
 securityContext: {}
+httpRoute:
+  enabled: false
