@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/vishvesh11/zapped/buzzwire-app
-  tag: "48f1c7ed754b5c48605877d89305b95dafc737de"
+  tag: "9fb46022bee6dd9d6682783762f4c821607fb8b7"
   pullPolicy: Always
 
 imagePullSecrets:
