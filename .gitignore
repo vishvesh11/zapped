@@ -1,0 +1,5 @@
+.venv/*
+venv/*
+.vscode/*
+firmware/.vscode/*
+firmware/.micropico
