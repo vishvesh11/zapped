@@ -20,12 +20,14 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # REQUIRED: Allows the action to push commits back to the repo
       packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required to commit and push changes
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -50,3 +52,17 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Update values.yaml and push to GitHub
+        run: |
+          # 1. Update the tag in values.yaml using sed
+          sed -i 's/tag: .*/tag: "${{ github.sha }}"/' helm/buzzwire-app/values.yaml
+
+          # 2. Configure Git bot identity
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 3. Commit and push the change
+          git add helm/buzzwire-app/values.yaml
+          git commit -m "chore: update image tag to ${{ github.sha }} [skip ci]"
+          git push
