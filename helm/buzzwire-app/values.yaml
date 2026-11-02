@@ -23,10 +23,20 @@ env:
 
 ingress:
   enabled: true
-  className: "traefik"
-  host: "diwaligame.vishvesh.me"
+  className: traefik
   annotations:
-    external-dns.alpha.kubernetes.io/target: ""
+    kubernetes.io/ingress.class: traefik
+    cert-manager.io/cluster-issuer: letsencrypt-cloudflare
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  host: diwaligame.vishvesh.me
+  path: /
+  pathType: Prefix
+  tls:
+    - hosts:
+        - diwaligame.vishvesh.me
+      secretName: diwali-buzzwire-tls
 
 serviceAccount:
   create: true
