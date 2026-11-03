@@ -14,8 +14,8 @@ USE_WATCHDOG = not BENCH_MODE
 # ---- Network (live mode) ---------------------------------------------------- #
 WIFI_SSID = "fast_iot"
 WIFI_PASSWORD = "9182736455"
-BACKEND_HOST = "192.168.5.82"   # IP of the machine running the FastAPI backend
-BACKEND_PORT = 8000
+BACKEND_HOST = "https://diwaligame.vishvesh.me"   # IP of the machine running the FastAPI backend
+BACKEND_PORT = 443
 API_KEY = "changeme"            # must match GAME_API_KEY on the backend ("" = none)
 DEVICE_ID = "pico-buzzwire-1"
 HTTP_TIMEOUT_S = 10
