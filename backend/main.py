@@ -11,13 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from config import settings
-from helpers import close_board, ensure_default_chime, init_board
+from helpers import close_board, ensure_default_chime, init_board, state
 from routes import public_router, router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_default_chime()
+    state.load_sounds()
     init_board()
     yield
     close_board()

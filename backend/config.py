@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # ---- Media ------------------------------------------------------------ #
     default_media: str = "chime.wav"
     allowed_ext: Set[str] = {".wav", ".ogg", ".mp3"}
+    max_media_bytes: int = Field(default=5 * 1024 * 1024, alias="MAX_MEDIA_BYTES")
+    # Once a player has MORE than this many touches, every further touch plays the
+    # penalty sound (if one is selected) instead of the normal chime.
+    penalty_threshold: int = Field(default=3, ge=0, le=100, alias="PENALTY_THRESHOLD")
 
     # ---- Headscale camera + Garage S3 ------------------------------------- #
     phone_snapshot_url: str = Field(
@@ -54,6 +58,11 @@ class Settings(BaseSettings):
     @property
     def media_dir_resolved(self) -> Path:
         return self.media_dir.resolve()
+
+    @property
+    def game_settings_path(self) -> Path:
+        """Admin-chosen sounds/threshold, stored next to the DB so they survive restarts."""
+        return Path(self.db_path).resolve().parent / "game_settings.json"
 
     @property
     def templates_dir_resolved(self) -> Path:

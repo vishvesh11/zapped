@@ -17,10 +17,27 @@ from conftest import FIRMWARE_DIR
 FIRMWARE_MODULES = ("config", "net", "main", "boot", "machine", "network", "uasyncio")
 
 
+class _Levels(dict):
+    """Input levels; a 1 -> 0 transition fires any falling-edge IRQ handler, like hardware."""
+
+    def __setitem__(self, pin, level):
+        old = self.get(pin, 1)
+        super().__setitem__(pin, level)
+        if old and not level and pin in FakePin.irqs:
+            handler, fake_pin = FakePin.irqs[pin]
+            handler(fake_pin)
+
+    def clear(self):
+        super().clear()
+        FakePin.irqs.clear()
+
+
 class FakePin:
     IN, OUT, PULL_UP = 0, 1, 2
-    levels = {}    # gpio -> input level (1 = released / pulled up, 0 = wand touching)
-    outputs = {}   # gpio/name -> last written output value
+    IRQ_FALLING, IRQ_RISING = 4, 8
+    levels = _Levels()  # gpio -> input level (1 = released / pulled up, 0 = wand touching)
+    outputs = {}        # gpio/name -> last written output value
+    irqs = {}           # gpio -> (handler, pin) for falling-edge interrupts
 
     def __init__(self, pin, mode=None, pull=None, value=None):
         self.id = pin
@@ -28,6 +45,10 @@ class FakePin:
             FakePin.outputs[pin] = value or 0
         elif mode == FakePin.IN:
             FakePin.levels.setdefault(pin, 1)
+
+    def irq(self, handler=None, trigger=None, hard=False):
+        if trigger & FakePin.IRQ_FALLING:
+            FakePin.irqs[self.id] = (handler, self)
 
     def value(self, v=None):
         if v is None:

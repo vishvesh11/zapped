@@ -8,8 +8,9 @@ import pytest
 from conftest import API_KEY
 from firmware_sim import FakePin, load_firmware, wait_for
 
-FAST = dict(SESSION_POLL_S=0.1, CONFIG_POLL_S=1, MIN_RUN_MS=300, FAULT_LOCKOUT_MS=200,
-            DEBOUNCE_MS=10, HOOK_DEBOUNCE_MS=20, USE_WATCHDOG=False, HTTP_TIMEOUT_S=3)
+FAST = dict(SESSION_POLL_S=0.1, SESSION_POLL_RUNNING_S=0.1, CONFIG_POLL_S=1, MIN_RUN_MS=300,
+            FAULT_LOCKOUT_MS=200, TRACK_RELEASE_MS=40, HOLD_REPEAT_MS=0, HOOK_DEBOUNCE_MS=20,
+            USE_WATCHDOG=False, HTTP_TIMEOUT_S=3)
 
 
 def live_overrides(backend, **extra):
@@ -130,6 +131,68 @@ def test_full_game_over_http(backend):
     assert cfg is not None
 
 
+def test_penalty_sound_triggers_after_three_touches_end_to_end(backend):
+    """Real firmware -> real backend -> SSE: touches 1-3 chime, 4+ play the uploaded sound."""
+    import io
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(8000)
+        w.writeframes(b"\0\0" * 400)
+    backend.http.put("/api/v1/media/penalty.wav?use_as=penalty", content=buf.getvalue()).raise_for_status()
+
+    async def scenario():
+        m, c = fw.main, fw.config
+        api = httpx.AsyncClient(base_url=backend.url, headers={"X-API-Key": API_KEY})
+        chimes = []
+        connected = asyncio.Event()
+
+        async def sse():
+            async with httpx.AsyncClient(timeout=None) as sc:
+                async with sc.stream("GET", backend.url + "/public/events/stream") as r:
+                    event = None
+                    async for line in r.aiter_lines():
+                        if line.startswith("event: "):
+                            event = line[7:]
+                            connected.set()
+                        elif line.startswith("data: ") and event == "play_chime":
+                            chimes.append(json.loads(line[6:]))
+
+        sse_task = asyncio.create_task(sse())
+        try:
+            await asyncio.wait_for(connected.wait(), 5)
+            await api.post("/api/v1/session/start", json={"player_name": "Pen"})
+            await wait_for(lambda: m.state.phase == m.READY, what="READY")
+            FakePin.levels[c.START_HOOK_PIN] = 0
+            await wait_for(lambda: m.state.hook_seen, what="hook seen")
+            FakePin.levels[c.START_HOOK_PIN] = 1
+            await wait_for(lambda: m.state.phase == m.RUNNING, what="RUNNING")
+
+            async def backend_running():
+                return (await api.get("/api/v1/session")).json()["phase"] == "running"
+            await wait_for(backend_running, what="backend running")
+
+            for n in range(1, 6):
+                FakePin.levels[c.TRACK_PIN] = 0
+                await wait_for(lambda: m.state.faults == n, what=f"fault {n}")
+                FakePin.levels[c.TRACK_PIN] = 1
+                await wait_for(lambda: any(ch["touch_count"] == n for ch in chimes), what=f"chime {n}")
+                await asyncio.sleep(c.FAULT_LOCKOUT_MS / 1000 + 0.05)
+
+            by_count = {ch["touch_count"]: ch for ch in chimes}
+            assert [by_count[n]["penalty"] for n in range(1, 6)] == [False, False, False, True, True]
+            assert by_count[3]["audio_url"] == "/public/media/chime.wav"
+            assert by_count[4]["audio_url"] == "/public/media/penalty.wav"
+        finally:
+            sse_task.cancel()
+            await api.aclose()
+
+    with load_firmware(**live_overrides(backend)) as fw:
+        asyncio.run(run_firmware(fw, scenario))
+
+
 def test_abort_from_panel_returns_device_to_idle(backend):
     async def scenario():
         m = fw.main
@@ -228,3 +291,91 @@ def test_bench_mode_game_without_backend():
 
     with load_firmware(**dict(FAST, BENCH_MODE=True)) as fw:
         asyncio.run(run_firmware(fw, scenario))
+
+
+# --------------------------------------------------------------------------- #
+# Touch sensitivity (bench mode, so only the firmware's own logic is involved)
+# --------------------------------------------------------------------------- #
+async def _bench_running(m, c):
+    FakePin.levels[c.START_HOOK_PIN] = 0
+    await wait_for(lambda: m.state.phase == m.READY, timeout=5, what="bench armed")
+    FakePin.levels[c.START_HOOK_PIN] = 1
+    await wait_for(lambda: m.state.phase == m.RUNNING, what="bench running")
+
+
+def _run_bench(scenario, **overrides):
+    with load_firmware(**dict(FAST, BENCH_MODE=True, **overrides)) as fw:
+        asyncio.run(run_firmware(fw, lambda: scenario(fw.main, fw.config)))
+
+
+def test_brief_brush_between_scans_is_counted():
+    """A contact shorter than one scan (never seen by polling) is latched by the IRQ."""
+    async def scenario(m, c):
+        await _bench_running(m, c)
+        FakePin.levels[c.TRACK_PIN] = 0
+        FakePin.levels[c.TRACK_PIN] = 1          # released before the loop ever runs
+        await wait_for(lambda: m.state.faults == 1, what="brief brush counted")
+    _run_bench(scenario)
+
+
+def test_brushes_before_the_run_do_not_count():
+    async def scenario(m, c):
+        FakePin.levels[c.TRACK_PIN] = 0          # brushed while carrying the wand to START
+        FakePin.levels[c.TRACK_PIN] = 1
+        await _bench_running(m, c)
+        await asyncio.sleep(0.15)
+        assert m.state.faults == 0
+    _run_bench(scenario)
+
+
+def test_scrape_chatter_counts_once():
+    """Bouncy contact while scraping is one touch, not a beep storm."""
+    async def scenario(m, c):
+        await _bench_running(m, c)
+        for _ in range(30):                      # ~300 ms of chattering contact
+            FakePin.levels[c.TRACK_PIN] = 0
+            await asyncio.sleep(0.005)
+            FakePin.levels[c.TRACK_PIN] = 1
+            await asyncio.sleep(0.005)
+        await asyncio.sleep(0.3)
+        assert m.state.faults == 1
+    _run_bench(scenario)
+
+
+def test_retouch_inside_lockout_is_counted_not_dropped():
+    async def scenario(m, c):
+        await _bench_running(m, c)
+        FakePin.levels[c.TRACK_PIN] = 0
+        await wait_for(lambda: m.state.faults == 1, what="first touch")
+        FakePin.levels[c.TRACK_PIN] = 1
+        await asyncio.sleep((c.TRACK_RELEASE_MS + 30) / 1000)   # clearly lifted off
+        FakePin.levels[c.TRACK_PIN] = 0                         # quick second touch...
+        await asyncio.sleep(0.02)
+        FakePin.levels[c.TRACK_PIN] = 1                         # ...ends inside the lockout
+        assert m.state.faults == 1
+        await wait_for(lambda: m.state.faults == 2, what="owed touch counted after lockout")
+        await asyncio.sleep(0.4)
+        assert m.state.faults == 2
+    _run_bench(scenario)
+
+
+def test_dragging_along_the_track_repeats_faults():
+    async def scenario(m, c):
+        await _bench_running(m, c)
+        FakePin.levels[c.TRACK_PIN] = 0
+        await asyncio.sleep(1.0)                 # held on the track for 1 s
+        FakePin.levels[c.TRACK_PIN] = 1
+        assert 3 <= m.state.faults <= 5          # 1 + one every 250 ms
+    _run_bench(scenario, HOLD_REPEAT_MS=250)
+
+
+def test_fault_on_the_finishing_scan_is_kept():
+    async def scenario(m, c):
+        await _bench_running(m, c)
+        await asyncio.sleep(c.MIN_RUN_MS / 1000)
+        FakePin.levels[c.TRACK_PIN] = 0
+        FakePin.levels[c.TRACK_PIN] = 1
+        FakePin.levels[c.END_HOOK_PIN] = 0
+        await wait_for(lambda: m.state.phase == m.IDLE, what="finished")
+        assert m.state.faults == 1
+    _run_bench(scenario)

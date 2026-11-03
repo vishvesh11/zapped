@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Create persistent directories for SQLite and media
-RUN mkdir -p /app/data /app/media
+# /app/data is the PVC: SQLite, uploaded sounds and sound settings all live there
+RUN mkdir -p /app/data/media
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -20,7 +20,7 @@ COPY backend/templates/ ./templates/
 # Environment defaults for k3s
 ENV PORT=8000 \
     DB_PATH=/app/data/leaderboard.db \
-    MEDIA_DIR=/app/media \
+    MEDIA_DIR=/app/data/media \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8000

@@ -4,12 +4,16 @@ Holds the in-memory game state, the SSE broadcaster, media/camera helpers and
 the SQLite leaderboard. Route handlers in ``routes.py`` build on these.
 """
 import asyncio
+import contextlib
 import io
 import json
 import logging
 import math
+import os
+import re
 import sqlite3
 import struct
+import tempfile
 import threading
 import time
 import wave
@@ -126,13 +130,66 @@ class Session:
 class GameState:
     def __init__(self) -> None:
         self.lock = threading.RLock()
-        self.media_file = settings.default_media
         self.session: Optional[Session] = None
+        self.reset_sounds()
+
+    def reset_sounds(self) -> None:
+        self.media_file = settings.default_media
+        self.penalty_media_file: Optional[str] = None
+        self.penalty_threshold = settings.penalty_threshold
 
     def config(self) -> ConfigResponse:
         return ConfigResponse(
             current_media_file=self.media_file,
+            penalty_media_file=self.penalty_media_file,
+            penalty_threshold=self.penalty_threshold,
         )
+
+    def sound_for(self, touch_count: int) -> Tuple[str, bool]:
+        """(file to play, is_penalty) for the touch that brought the count to ``touch_count``."""
+        if self.penalty_media_file and touch_count > self.penalty_threshold:
+            return self.penalty_media_file, True
+        return self.media_file, False
+
+    # ---- persistence (sound choices survive pod restarts) ---- #
+    def save_sounds(self) -> None:
+        path = settings.game_settings_path
+        try:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({
+                "current_media_file": self.media_file,
+                "penalty_media_file": self.penalty_media_file,
+                "penalty_threshold": self.penalty_threshold,
+            }))
+            os.replace(tmp, path)
+        except OSError:
+            log.exception("could not save game settings to %s", path)
+
+    def load_sounds(self) -> None:
+        self.reset_sounds()
+        path = settings.game_settings_path
+        try:
+            data = json.loads(path.read_text())
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError):
+            log.exception("ignoring unreadable game settings at %s", path)
+            return
+
+        def usable(name):
+            try:
+                return bool(name) and resolve_media(name) is not None
+            except ValueError:
+                log.warning("saved sound %r is no longer available; ignoring it", name)
+                return False
+
+        if usable(data.get("current_media_file")):
+            self.media_file = data["current_media_file"]
+        if usable(data.get("penalty_media_file")):
+            self.penalty_media_file = data["penalty_media_file"]
+        threshold = data.get("penalty_threshold")
+        if isinstance(threshold, int) and 0 <= threshold <= 100:
+            self.penalty_threshold = threshold
 
 
 state = GameState()
@@ -173,6 +230,52 @@ def list_media() -> List[str]:
         return []
     return sorted(p.name for p in media_dir.iterdir()
                   if p.is_file() and p.suffix.lower() in settings.allowed_ext)
+
+
+_MEDIA_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,95}$")
+
+
+def _looks_like(ext: str, data: bytes) -> bool:
+    """Cheap magic-byte check so only real audio of the declared type is stored."""
+    if ext == ".wav":
+        return data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+    if ext == ".ogg":
+        return data[:4] == b"OggS"
+    if ext == ".mp3":
+        return data[:3] == b"ID3" or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0)
+    return False
+
+
+def save_media(name: str, data: bytes) -> Path:
+    """Validate and atomically store an uploaded sound in the media folder.
+
+    Raises ``ValueError`` with a user-facing message if the name or content is rejected.
+    """
+    if not _MEDIA_NAME_RE.fullmatch(name) or ".." in name:
+        raise ValueError("file name may only contain letters, digits, spaces, '.', '_' and '-'")
+    ext = Path(name).suffix.lower()
+    if ext not in settings.allowed_ext:
+        raise ValueError("unsupported type: use " + ", ".join(sorted(settings.allowed_ext)))
+    if not data:
+        raise ValueError("file is empty")
+    if len(data) > settings.max_media_bytes:
+        raise ValueError(f"file is larger than {settings.max_media_bytes // (1024 * 1024)} MB")
+    if not _looks_like(ext, data):
+        raise ValueError(f"file content is not valid {ext[1:].upper()} audio")
+
+    media_dir = settings.media_dir_resolved
+    media_dir.mkdir(parents=True, exist_ok=True)
+    target = media_dir / name
+    fd, tmp = tempfile.mkstemp(dir=media_dir, prefix=".upload-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    return target
 
 
 def ensure_default_chime() -> None:

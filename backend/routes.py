@@ -9,7 +9,8 @@ import json
 import secrets
 import time
 import uuid
-from typing import AsyncGenerator, List, Optional
+from urllib.parse import quote
+from typing import AsyncGenerator, List, Literal, Optional
 
 from fastapi import (
     APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request,
@@ -28,6 +29,7 @@ from helpers import (
     log,
     resolve_media,
     s3_client,
+    save_media,
     session_response,
     state,
 )
@@ -37,6 +39,7 @@ from schemas import (
     ConfigUpdate,
     LeaderboardEntry,
     MediaListResponse,
+    MediaUploadResponse,
     PhotoItem,
     RunStart,
     SessionResponse,
@@ -149,14 +152,20 @@ async def get_config():
 
 @router.post("/config", response_model=ConfigResponse)
 async def update_config(update: ConfigUpdate):
-    if update.current_media_file is not None:
-        try:
-            resolve_media(update.current_media_file)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
+    for name in (update.current_media_file, update.penalty_media_file):
+        if name:  # "" for the penalty sound means "off"
+            try:
+                resolve_media(name)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
     with state.lock:
         if update.current_media_file is not None:
             state.media_file = update.current_media_file
+        if update.penalty_media_file is not None:
+            state.penalty_media_file = update.penalty_media_file or None
+        if update.penalty_threshold is not None:
+            state.penalty_threshold = update.penalty_threshold
+        state.save_sounds()
         cfg = state.config()
     broadcaster.broadcast("config_update", cfg.model_dump())
     return cfg
@@ -165,6 +174,41 @@ async def update_config(update: ConfigUpdate):
 @router.get("/media", response_model=MediaListResponse)
 async def get_media():
     return MediaListResponse(files=list_media())
+
+
+@router.put("/media/{filename}", response_model=MediaUploadResponse)
+async def upload_media(filename: str, request: Request,
+                       use_as: Optional[Literal["chime", "penalty"]] = None):
+    """Upload a sound as the raw request body (e.g. ``curl -T boo.mp3 .../media/boo.mp3``).
+
+    ``use_as=penalty`` makes it the sound played once a player passes the touch threshold;
+    ``use_as=chime`` makes it the normal touch sound. Re-uploading a name replaces the file.
+    """
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > settings.max_media_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"file is larger than {settings.max_media_bytes // (1024 * 1024)} MB",
+            )
+    try:
+        save_media(filename, bytes(data))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    log.info("Uploaded media file %s (%d bytes)", filename, len(data))
+
+    with state.lock:
+        if use_as == "chime":
+            state.media_file = filename
+        elif use_as == "penalty":
+            state.penalty_media_file = filename
+        if use_as:
+            state.save_sounds()
+        cfg = state.config()
+    if use_as:
+        broadcaster.broadcast("config_update", cfg.model_dump())
+    return MediaUploadResponse(filename=filename, size=len(data), files=list_media(), config=cfg)
 
 
 @router.post("/camera/test")
@@ -231,13 +275,14 @@ async def touch_event(background: BackgroundTasks, payload: Optional[TouchEvent]
             faults = sess.touch_count
             sess_id = sess.id
             player_name = sess.player_name
-        media = state.media_file
+        media, penalty = state.sound_for(faults)
         resp_state = session_response()
 
     broadcaster.broadcast("play_chime", {
-        "audio_url": f"/public/media/{media}",
+        "audio_url": f"/public/media/{quote(media)}",
         "touch_count": faults,
         "session_id": sess_id,
+        "penalty": penalty,
     })
     broadcaster.broadcast("session_update", resp_state.model_dump())
 
