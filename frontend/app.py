@@ -37,6 +37,18 @@ def api(method: str, path: str, **kwargs) -> Tuple[Optional[Any], Optional[str]]
         return None, "Backend returned invalid JSON"
 
 
+PICK_TEAM = "Select a team…"
+OTHER_TEAM = "Other… (type a name)"
+
+
+@st.cache_data(ttl=300)
+def preset_teams() -> list:
+    try:
+        return requests.get(f"{BACKEND}/public/teams", timeout=TIMEOUT_S).json()["teams"]
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+
+
 # --------------------------------------------------------------------------- #
 st.title("⚡ Buzz Wire Control Panel")
 
@@ -95,12 +107,18 @@ with left:
     st.caption("Click Start, then hang the wand on the START hook. Lift it to begin. "
                "Hang it on the END hook to finish.")
     name = st.text_input("Player name", max_chars=24)
+    team_choice = st.selectbox("Team / competency", [PICK_TEAM, *preset_teams(), OTHER_TEAM])
+    team = team_choice if team_choice not in (PICK_TEAM, OTHER_TEAM) else ""
+    if team_choice == OTHER_TEAM:
+        team = st.text_input("Team name", max_chars=32).strip()
     c1, c2 = st.columns(2)
     if c1.button("Start game", type="primary"):
         if not name.strip():
             st.error("Enter a player name first.")
+        elif not team:
+            st.error("Select the player's team / competency.")
         else:
-            _, serr = api("POST", "/session/start", json={"player_name": name})
+            _, serr = api("POST", "/session/start", json={"player_name": name, "team": team})
             st.error(serr) if serr else st.rerun()
     if c2.button("Abort game"):
         _, aerr = api("DELETE", "/session")
@@ -119,7 +137,7 @@ def live_tracker() -> None:
         st.info("No active game. Enter a name and press Start.")
         return
     a, b, c, d = st.columns(4)
-    a.metric("Player", sess["player_name"])
+    a.metric("Player", sess["player_name"], help=sess.get("team") or None)
     b.metric("Faults", sess["touch_count"])
     c.metric("Timer", "%.1f s" % sess["elapsed_seconds"])
     d.metric("Score", sess["live_score"])
@@ -146,9 +164,11 @@ def leaderboard() -> None:
         st.info("No completed games yet.")
         return
     df = pd.DataFrame(rows).rename(columns={
-        "rank": "Rank", "player_name": "Player", "score": "Score",
+        "rank": "Rank", "player_name": "Player", "team": "Team", "score": "Score",
         "completion_time_seconds": "Time (s)", "touch_count": "Faults"})
-    st.dataframe(df[["Rank", "Player", "Score", "Time (s)", "Faults"]], hide_index=True)
+    if "Team" not in df:
+        df["Team"] = None
+    st.dataframe(df[["Rank", "Player", "Team", "Score", "Time (s)", "Faults"]], hide_index=True)
 
 
 with right:

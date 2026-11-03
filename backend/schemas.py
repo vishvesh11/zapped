@@ -40,8 +40,22 @@ class MediaUploadResponse(BaseModel):
     config: ConfigResponse
 
 
+def normalize_team(v: Optional[str]) -> Optional[str]:
+    """Collapse whitespace and snap to the preset spelling ("data science" -> "Data Science")."""
+    if v is None:
+        return None
+    v = " ".join(v.split())
+    if not v:
+        return None
+    for preset in settings.teams:
+        if preset.casefold() == v.casefold():
+            return preset
+    return v
+
+
 class SessionStart(BaseModel):
     player_name: str = Field(min_length=1, max_length=24)
+    team: Optional[str] = Field(None, max_length=32)
 
     @field_validator("player_name")
     @classmethod
@@ -51,11 +65,17 @@ class SessionStart(BaseModel):
             raise ValueError("player_name must not be blank")
         return v
 
+    @field_validator("team")
+    @classmethod
+    def clean_team(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_team(v)
+
 
 class SessionResponse(BaseModel):
     active: bool
     session_id: Optional[str] = None
     player_name: Optional[str] = None
+    team: Optional[str] = None
     phase: Optional[str] = None
     touch_count: int = 0
     elapsed_seconds: float = 0.0
@@ -89,6 +109,7 @@ class CompleteRequest(BaseModel):
 class LeaderboardEntry(BaseModel):
     rank: int
     player_name: str
+    team: Optional[str] = None
     touch_count: int
     completion_time_seconds: float
     score: int
@@ -100,3 +121,21 @@ class PhotoItem(BaseModel):
     url: str
     session_id: str
     timestamp: str
+
+
+class TeamEntry(BaseModel):
+    """A team's standing: the median of its players' best scores (one score per player,
+    so a single person playing many times can't drag the team up or down)."""
+    rank: int
+    team: str
+    median_score: float
+    players: int
+    runs: int
+    best_player: str
+    best_score: int
+    median_time_seconds: float
+    median_touches: float
+
+
+class TeamsResponse(BaseModel):
+    teams: List[str]

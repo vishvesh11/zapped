@@ -12,6 +12,7 @@ import math
 import os
 import re
 import sqlite3
+import statistics
 import struct
 import tempfile
 import threading
@@ -27,7 +28,7 @@ import httpx
 from PIL import Image, ImageDraw, ImageFont
 
 from config import settings
-from schemas import ConfigResponse, LeaderboardEntry, SessionResponse
+from schemas import ConfigResponse, LeaderboardEntry, SessionResponse, TeamEntry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("buzzwire")
@@ -116,6 +117,7 @@ broadcaster = EventBroadcaster()
 class Session:
     id: str
     player_name: str
+    team: Optional[str] = None
     run_started_at: Optional[float] = None
     touch_count: int = 0
 
@@ -201,7 +203,7 @@ def session_response() -> SessionResponse:
         return SessionResponse(active=False)
     elapsed = s.elapsed()
     return SessionResponse(
-        active=True, session_id=s.id, player_name=s.player_name,
+        active=True, session_id=s.id, player_name=s.player_name, team=s.team,
         phase="running" if s.running else "waiting",
         touch_count=s.touch_count,
         elapsed_seconds=round(elapsed, 2),
@@ -465,13 +467,16 @@ class Leaderboard:
                 self._conn.execute("ALTER TABLE entries ADD COLUMN score INTEGER NOT NULL DEFAULT 0")
             if "session_id" not in cols:
                 self._conn.execute("ALTER TABLE entries ADD COLUMN session_id TEXT")
+            if "team" not in cols:
+                self._conn.execute("ALTER TABLE entries ADD COLUMN team TEXT")
             self._conn.commit()
 
-    def add(self, session_id: str, name: str, faults: int, seconds: float, score: int) -> int:
+    def add(self, session_id: str, name: str, faults: int, seconds: float, score: int,
+            team: Optional[str] = None) -> int:
         with self._lock:
             self._conn.execute(
-                """INSERT INTO entries (session_id, player_name, touch_count, completion_time_seconds, score)
-                   VALUES (?,?,?,?,?)""", (session_id, name, faults, seconds, score))
+                """INSERT INTO entries (session_id, player_name, touch_count, completion_time_seconds, score, team)
+                   VALUES (?,?,?,?,?,?)""", (session_id, name, faults, seconds, score, team))
             self._conn.commit()
             better = self._conn.execute(
                 """SELECT COUNT(*) FROM entries WHERE score > ?
@@ -483,16 +488,56 @@ class Leaderboard:
     def top(self, limit: int) -> List[LeaderboardEntry]:
         with self._lock:
             rows = self._conn.execute(
-                """SELECT player_name, touch_count, completion_time_seconds, score, session_id FROM entries
+                """SELECT player_name, touch_count, completion_time_seconds, score, session_id, team
+                   FROM entries
                    ORDER BY score DESC, completion_time_seconds ASC, touch_count ASC, id ASC
                    LIMIT ?""", (limit,)).fetchall()
         return [
             LeaderboardEntry(
                 rank=i, player_name=r[0], touch_count=r[1],
-                completion_time_seconds=r[2], score=r[3], session_id=r[4]
+                completion_time_seconds=r[2], score=r[3], session_id=r[4], team=r[5]
             )
             for i, r in enumerate(rows, start=1)
         ]
+
+    def teams(self) -> List[TeamEntry]:
+        """Team standings ranked by the median of each player's best score.
+
+        Players are matched case-insensitively within a team; runs without a team are
+        left out. Ties go to the team with more players, then the higher best score.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT team, player_name, score, completion_time_seconds, touch_count
+                   FROM entries WHERE team IS NOT NULL AND TRIM(team) != ''
+                   ORDER BY id ASC""").fetchall()
+
+        groups = {}  # team key -> {"name": display name, "runs": n, "best": {player key: row}}
+        for team, player, score, seconds, touches in rows:
+            g = groups.setdefault(team.casefold(), {"name": team, "runs": 0, "best": {}})
+            g["runs"] += 1
+            run = (score, -seconds, -touches, player, seconds, touches)
+            key = player.strip().casefold()
+            if key not in g["best"] or run[:3] > g["best"][key][:3]:
+                g["best"][key] = run
+
+        standings = []
+        for g in groups.values():
+            best = list(g["best"].values())
+            top = max(best, key=lambda r: r[:3])
+            standings.append({
+                "team": g["name"],
+                "median_score": round(statistics.median(r[0] for r in best), 1),
+                "players": len(best),
+                "runs": g["runs"],
+                "best_player": top[3],
+                "best_score": top[0],
+                "median_time_seconds": round(statistics.median(r[4] for r in best), 2),
+                "median_touches": statistics.median(r[5] for r in best),
+            })
+        standings.sort(key=lambda t: (-t["median_score"], -t["players"], -t["best_score"],
+                                      t["team"].casefold()))
+        return [TeamEntry(rank=i, **t) for i, t in enumerate(standings, start=1)]
 
     def clear(self) -> None:
         with self._lock:

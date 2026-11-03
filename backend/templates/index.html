@@ -3,111 +3,291 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Buzz Wire Challenge — Leaderboard & Photo Gallery</title>
+  <title>Buzz Wire Challenge — Live Leaderboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #070a13;
+      --panel: rgba(17, 24, 39, 0.62);
+      --line: rgba(148, 163, 184, 0.14);
+      --gold: #fbbf24;
+      --silver: #cbd5e1;
+      --bronze: #f59e0b;
+    }
+    .hidden { display: none !important; }
+    html { background: var(--bg); }
+    body {
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+      background:
+        radial-gradient(900px 500px at 8% -10%, rgba(251, 191, 36, 0.13), transparent 60%),
+        radial-gradient(800px 600px at 100% 0%, rgba(56, 189, 248, 0.12), transparent 60%),
+        radial-gradient(900px 700px at 50% 120%, rgba(168, 85, 247, 0.12), transparent 60%),
+        var(--bg);
+      background-attachment: fixed;
+    }
+    body::before {               /* faint circuit grid */
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image:
+        linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+    }
+    .font-display { font-family: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, sans-serif; }
+    .font-num { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+    .glass {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    .gradient-text {
+      background: linear-gradient(90deg, #fde68a, #fbbf24 35%, #fb923c 70%, #f472b6);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .bolt {
+      background: conic-gradient(from 180deg, #fbbf24, #fb923c, #f472b6, #38bdf8, #fbbf24);
+      animation: spin 8s linear infinite;
+    }
+    .bolt-inner { background: #0b1020; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .bolt-glyph { animation: flicker 3.2s infinite; }
+    @keyframes flicker { 0%, 92%, 100% { opacity: 1; } 94% { opacity: .35; } 96% { opacity: 1; } 97% { opacity: .5; } }
+
+    .live-dot { position: relative; }
+    .live-dot::after {
+      content: ''; position: absolute; inset: -4px; border-radius: 9999px;
+      border: 2px solid currentColor; opacity: .6; animation: ping 1.6s cubic-bezier(0, 0, .2, 1) infinite;
+    }
+    @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
+
+    .live-card {
+      background:
+        linear-gradient(135deg, rgba(251, 191, 36, 0.16), rgba(244, 114, 182, 0.10) 50%, rgba(56, 189, 248, 0.12)),
+        rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.08), 0 20px 60px -20px rgba(251, 191, 36, 0.35);
+    }
+    .bump { animation: bump .45s ease; }
+    @keyframes bump { 0% { transform: scale(1); } 35% { transform: scale(1.35); color: #fb7185; } 100% { transform: scale(1); } }
+
+    .tab { color: #94a3b8; }
+    .tab[aria-selected="true"] {
+      color: #0b1020; background: linear-gradient(90deg, #fde68a, #fbbf24);
+      box-shadow: 0 6px 20px -8px rgba(251, 191, 36, 0.7);
+    }
+
+    .podium-card { transition: transform .25s ease, box-shadow .25s ease; }
+    .podium-card:hover { transform: translateY(-4px); }
+    .podium-1 { border-color: rgba(251, 191, 36, 0.55); box-shadow: 0 25px 60px -25px rgba(251, 191, 36, 0.55); }
+    .podium-2 { border-color: rgba(203, 213, 225, 0.40); }
+    .podium-3 { border-color: rgba(245, 158, 11, 0.40); }
+    .step-1 { height: 120px; background: linear-gradient(180deg, rgba(251, 191, 36, .35), rgba(251, 191, 36, .05)); }
+    .step-2 { height: 86px;  background: linear-gradient(180deg, rgba(203, 213, 225, .28), rgba(203, 213, 225, .04)); }
+    .step-3 { height: 64px;  background: linear-gradient(180deg, rgba(245, 158, 11, .28), rgba(245, 158, 11, .04)); }
+
+    .avatar {
+      display: inline-flex; align-items: center; justify-content: center; flex: none;
+      border-radius: 9999px; font-weight: 700; color: #0b1020;
+      background: linear-gradient(135deg, hsl(var(--h, 40) 90% 70%), hsl(calc(var(--h, 40) + 40) 85% 60%));
+    }
+    .team-chip {
+      display: inline-flex; align-items: center; gap: .35rem; white-space: nowrap;
+      border-radius: 9999px; padding: .1rem .55rem; font-size: .7rem; font-weight: 600;
+      color: hsl(var(--h, 210) 90% 80%);
+      background: hsl(var(--h, 210) 70% 50% / .14);
+      border: 1px solid hsl(var(--h, 210) 70% 60% / .30);
+    }
+    .team-chip::before { content: ''; width: .45rem; height: .45rem; border-radius: 9999px; background: hsl(var(--h, 210) 85% 62%); }
+    .team-bar { background: linear-gradient(90deg, hsl(var(--h, 210) 85% 55%), hsl(calc(var(--h, 210) + 35) 90% 65%)); transition: width .8s cubic-bezier(.2, .8, .2, 1); }
+
+    .row-in { animation: rowIn .35s ease both; }
+    @keyframes rowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .row-new { animation: glow 2.4s ease 3; }
+    @keyframes glow { 0%, 100% { background: transparent; } 50% { background: rgba(251, 191, 36, 0.14); } }
+
+    .toast { animation: toastIn .4s cubic-bezier(.2, .8, .2, 1) both; }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(16px) scale(.98); } to { opacity: 1; transform: none; } }
+
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, .2); border-radius: 9999px; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+<body class="min-h-screen text-slate-100 antialiased">
+  <div class="relative z-10">
 
   <!-- Header -->
-  <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-20">
-    <div class="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
+  <header class="sticky top-0 z-30 border-b border-white/5 bg-slate-950/60 backdrop-blur-xl">
+    <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
       <div class="flex items-center gap-3">
-        <span class="text-3xl">⚡</span>
+        <div class="bolt grid h-11 w-11 place-items-center rounded-2xl p-[2px]">
+          <div class="bolt-inner grid h-full w-full place-items-center rounded-[14px]" style="animation: spin 8s linear infinite reverse;">
+            <span class="bolt-glyph text-xl">⚡</span>
+          </div>
+        </div>
         <div>
-          <h1 class="text-xl font-bold tracking-tight text-amber-400">BUZZ WIRE CHALLENGE</h1>
-          <p class="text-xs text-slate-400">Live Standings & Touch Photo Gallery</p>
+          <h1 class="font-display text-xl font-bold tracking-tight sm:text-2xl"><span class="gradient-text">BUZZ WIRE</span> <span class="text-white">CHALLENGE</span></h1>
+          <p class="text-xs text-slate-400">Steady hands win. Live standings, team race &amp; touch moments.</p>
         </div>
       </div>
 
-      <!-- Live Active Run Banner -->
-      <div id="live-banner" class="hidden items-center gap-4 bg-amber-500/10 border border-amber-500/40 px-4 py-2 rounded-lg">
-        <span class="h-2.5 w-2.5 rounded-full bg-amber-400 animate-ping"></span>
-        <div class="text-sm">
-          <span class="text-slate-400">Now Playing:</span>
-          <strong id="live-player" class="text-white ml-1">-</strong>
-          <span id="live-phase" class="ml-2 text-xs uppercase px-2 py-0.5 rounded bg-slate-800 text-amber-300">WAITING</span>
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <div class="glass flex items-center gap-2 rounded-full px-3 py-1.5">
+          <span class="text-slate-400">Players</span><strong id="stat-players" class="font-num text-white">0</strong>
         </div>
-        <div class="text-sm font-mono border-l border-slate-700 pl-4">
-          Touches: <strong id="live-touches" class="text-rose-400">0</strong>
+        <div class="glass flex items-center gap-2 rounded-full px-3 py-1.5">
+          <span class="text-slate-400">Teams</span><strong id="stat-teams" class="font-num text-white">0</strong>
+        </div>
+        <div class="glass flex items-center gap-2 rounded-full px-3 py-1.5">
+          <span class="text-slate-400">Top score</span><strong id="stat-best" class="font-num text-amber-300">–</strong>
+        </div>
+        <div id="conn" class="glass flex items-center gap-2 rounded-full px-3 py-1.5 text-slate-400">
+          <span id="conn-dot" class="h-2 w-2 rounded-full bg-slate-500"></span><span id="conn-text">Connecting…</span>
         </div>
       </div>
     </div>
   </header>
 
-  <!-- Main Content Grid -->
-  <main class="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+  <main class="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6">
 
-    <!-- Left Column: Leaderboard (7 cols) -->
-    <section class="lg:col-span-7">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold text-white">🏆 Top Standings</h2>
-        <span class="text-xs text-slate-400">Click a player to view their touch photos</span>
+    <!-- Live: now playing -->
+    <section id="live-banner" class="live-card hidden overflow-hidden rounded-3xl p-5 sm:p-7" aria-live="polite">
+      <div class="grid grid-cols-1 items-center gap-6 md:grid-cols-12">
+        <div class="flex items-center gap-4 md:col-span-6">
+          <div id="live-avatar" class="avatar h-16 w-16 text-2xl sm:h-20 sm:w-20 sm:text-3xl">?</div>
+          <div class="min-w-0">
+            <div class="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">
+              <span class="live-dot h-2 w-2 rounded-full bg-rose-500 text-rose-500"></span> Now playing
+            </div>
+            <div id="live-player" class="font-display truncate text-3xl font-bold text-white sm:text-4xl">-</div>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <span id="live-team" class="team-chip hidden"></span>
+              <span id="live-phase" class="rounded-full bg-white/10 px-2.5 py-0.5 text-[0.7rem] font-semibold uppercase tracking-wider text-amber-200">waiting</span>
+            </div>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3 md:col-span-6">
+          <div class="rounded-2xl bg-black/25 p-4 text-center">
+            <div class="text-[0.7rem] uppercase tracking-wider text-slate-400">Time</div>
+            <div id="live-timer" class="font-num mt-1 text-3xl font-bold text-white sm:text-4xl">0.0</div>
+          </div>
+          <div class="rounded-2xl bg-black/25 p-4 text-center">
+            <div class="text-[0.7rem] uppercase tracking-wider text-slate-400">Touches</div>
+            <div id="live-touches" class="font-num mt-1 inline-block text-3xl font-bold text-rose-400 sm:text-4xl">0</div>
+          </div>
+          <div class="rounded-2xl bg-black/25 p-4 text-center">
+            <div class="text-[0.7rem] uppercase tracking-wider text-slate-400">Score</div>
+            <div id="live-score" class="font-num mt-1 text-3xl font-bold text-amber-300 sm:text-4xl">–</div>
+          </div>
+        </div>
       </div>
-
-      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="border-b border-slate-800 text-xs uppercase text-slate-400 bg-slate-900/80">
-              <th class="py-3.5 px-4">Rank</th>
-              <th class="py-3.5 px-4">Player</th>
-              <th class="py-3.5 px-4 text-center">Touches</th>
-              <th class="py-3.5 px-4 text-right">Time</th>
-              <th class="py-3.5 px-4 text-right">Score</th>
-              <th class="py-3.5 px-4 text-center">Photos</th>
-            </tr>
-          </thead>
-          <tbody id="leaderboard-body" class="divide-y divide-slate-800/70 text-sm">
-            <tr><td colspan="6" class="py-8 text-center text-slate-500">Loading leaderboard...</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <p id="live-hint" class="mt-4 text-sm text-slate-300"></p>
     </section>
 
-    <!-- Right Column: Live Photo Wall (5 cols) -->
-    <section class="lg:col-span-5">
-      <div class="flex items-center justify-between mb-4">
-        <h2 id="gallery-title" class="text-lg font-semibold text-amber-400">📸 Latest Touch Moments</h2>
-        <button id="reset-gallery-btn" onclick="loadPhotos()" type="button" class="hidden text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1 rounded">
-          Show All Photos
-        </button>
-      </div>
+    <div class="grid grid-cols-1 gap-8 lg:grid-cols-12">
 
-      <div id="photo-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <p class="text-slate-500 text-sm col-span-2 py-8 text-center">No touches captured yet!</p>
-      </div>
-    </section>
+      <!-- Standings -->
+      <section class="space-y-6 lg:col-span-8">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div role="tablist" aria-label="Leaderboard view" class="glass inline-flex rounded-full p-1 text-sm font-semibold">
+            <button id="tab-players" role="tab" aria-selected="true" aria-controls="panel-players" type="button"
+                    class="tab rounded-full px-4 py-1.5 transition" onclick="showTab('players')">🏆 Players</button>
+            <button id="tab-teams" role="tab" aria-selected="false" aria-controls="panel-teams" type="button"
+                    class="tab rounded-full px-4 py-1.5 transition" onclick="showTab('teams')">🤝 Teams</button>
+          </div>
+          <label id="team-filter-wrap" class="flex items-center gap-2 text-xs text-slate-400">
+            Team
+            <select id="team-filter" class="glass rounded-full px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-400/60">
+              <option value="">All teams</option>
+            </select>
+          </label>
+        </div>
 
+        <!-- Players -->
+        <div id="panel-players" role="tabpanel" aria-labelledby="tab-players" class="space-y-6">
+          <div id="podium" class="hidden grid-cols-3 items-end gap-3 sm:gap-5" style="display:grid"></div>
+
+          <div class="glass overflow-hidden rounded-3xl">
+            <div class="overflow-x-auto">
+              <table class="w-full border-collapse text-left">
+                <thead>
+                  <tr class="border-b border-white/5 text-[0.7rem] uppercase tracking-wider text-slate-400">
+                    <th class="px-4 py-3.5 sm:px-5">Rank</th>
+                    <th class="px-4 py-3.5">Player</th>
+                    <th class="px-4 py-3.5 text-center">Touches</th>
+                    <th class="px-4 py-3.5 text-right">Time</th>
+                    <th class="px-4 py-3.5 text-right">Score</th>
+                    <th class="px-4 py-3.5 text-center sm:px-5">Photos</th>
+                  </tr>
+                </thead>
+                <tbody id="leaderboard-body" class="divide-y divide-white/5 text-sm">
+                  <tr><td colspan="6" class="py-10 text-center text-slate-500">Loading leaderboard…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Teams -->
+        <div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="hidden space-y-4">
+          <div class="glass rounded-2xl px-4 py-3 text-xs leading-relaxed text-slate-400">
+            Teams are ranked by the <strong class="text-slate-200">median</strong> of their players’ best scores,
+            so every player counts equally and one superstar (or one bad run) can’t carry the team.
+            Each player’s best run is used.
+          </div>
+          <div id="team-body" class="space-y-3">
+            <p class="glass rounded-3xl py-10 text-center text-sm text-slate-500">Loading team standings…</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Photo wall -->
+      <section class="lg:col-span-4">
+        <div class="mb-4 flex items-center justify-between gap-2">
+          <h2 id="gallery-title" class="font-display truncate text-lg font-semibold text-white">📸 Latest Touch Moments</h2>
+          <button id="reset-gallery-btn" onclick="loadPhotos()" type="button"
+                  class="glass hidden rounded-full px-3 py-1 text-xs text-slate-200 hover:bg-white/10">Show All Photos</button>
+        </div>
+        <div id="photo-grid" class="grid grid-cols-2 gap-3">
+          <p class="col-span-2 py-8 text-center text-sm text-slate-500">No touches captured yet!</p>
+        </div>
+      </section>
+    </div>
+
+    <footer class="pb-6 pt-2 text-center text-xs text-slate-500">
+      Lift the wand off START, follow the wire without touching, hang it on END. Fewer touches and a faster time = higher score.
+    </footer>
   </main>
+  </div>
 
-  <!-- Lightbox Modal for Fullscreen Image & Download -->
-  <div id="lightbox" class="fixed inset-0 bg-black/90 hidden items-center justify-center z-50 p-4" onclick="closeLightbox()">
-    <div class="max-w-3xl w-full bg-slate-900 border border-amber-500/40 rounded-xl p-4" onclick="event.stopPropagation()">
-      <img id="lightbox-img" src="" class="w-full rounded-lg mb-4" alt="Touch photo" />
-      <div class="flex justify-between items-center">
-        <a id="lightbox-dl" href="" download class="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-4 py-2 rounded-lg text-sm">
-          ⬇ Download Photo
-        </a>
-        <button onclick="closeLightbox()" class="text-slate-400 hover:text-white text-sm px-3 py-2">Close</button>
+  <!-- Finished toast -->
+  <div id="toast-wrap" class="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4"></div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/85 p-4 backdrop-blur-sm" onclick="closeLightbox()">
+    <div class="glass w-full max-w-3xl rounded-3xl p-4" onclick="event.stopPropagation()">
+      <img id="lightbox-img" src="" class="mb-4 w-full rounded-2xl" alt="Touch photo" />
+      <div class="flex items-center justify-between">
+        <a id="lightbox-dl" href="" download class="rounded-full bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-amber-300">⬇ Download photo</a>
+        <button onclick="closeLightbox()" type="button" class="px-3 py-2 text-sm text-slate-400 hover:text-white">Close</button>
       </div>
     </div>
   </div>
 
   <script>
-    // All dynamic text is set via textContent / DOM APIs (never innerHTML) so player
-    // names and URLs cannot inject markup or script.
+    // All dynamic text goes through textContent / DOM APIs (never innerHTML), so player
+    // and team names cannot inject markup or script.
     function el(tag, className, text) {
       const node = document.createElement(tag);
       if (className) node.className = className;
       if (text !== undefined && text !== null) node.textContent = String(text);
       return node;
-    }
-
-    function messageRow(colspan, text) {
-      const tr = el('tr');
-      const td = el('td', 'py-8 text-center text-slate-500', text);
-      td.colSpan = colspan;
-      tr.appendChild(td);
-      return tr;
     }
 
     async function getJson(url) {
@@ -116,37 +296,227 @@
       return res.json();
     }
 
+    // Stable, well-spread colour per team/player name (FNV-1a hash stepped by the golden angle).
+    function hue(text) {
+      let h = 0x811c9dc5;
+      for (const ch of String(text || '').toLowerCase()) {
+        h ^= ch.codePointAt(0);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return Math.round((h % 1000) * 137.508) % 360;
+    }
+
+    function initials(name) {
+      const parts = String(name || '?').trim().split(/\s+/).filter(Boolean);
+      const letters = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0] || '?').slice(0, 2);
+      return letters.toUpperCase();
+    }
+
+    function avatar(name, sizeClass) {
+      const a = el('div', 'avatar ' + sizeClass, initials(name));
+      a.style.setProperty('--h', hue(name));
+      return a;
+    }
+
+    function teamChip(team) {
+      const chip = el('span', 'team-chip', team);
+      chip.style.setProperty('--h', hue(team));
+      return chip;
+    }
+
+    const fmtTime = s => Number(s).toFixed(2) + 's';
+    const fmtScore = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 1 });
+
+    // ------------------------------------------------------------------ //
+    // Tabs + team filter
+    // ------------------------------------------------------------------ //
+    let activeTab = 'players';
+    function showTab(name) {
+      activeTab = name;
+      for (const t of ['players', 'teams']) {
+        document.getElementById('tab-' + t).setAttribute('aria-selected', String(t === name));
+        document.getElementById('panel-' + t).classList.toggle('hidden', t !== name);
+      }
+      document.getElementById('team-filter-wrap').classList.toggle('hidden', name !== 'players');
+      if (name === 'teams') loadTeams();
+    }
+
+    document.getElementById('team-filter').addEventListener('change', () => renderPlayers());
+
+    function refreshTeamFilter(rows) {
+      const select = document.getElementById('team-filter');
+      const current = select.value;
+      const teams = [...new Set(rows.map(r => r.team).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      select.replaceChildren(el('option', '', 'All teams'));
+      select.firstChild.value = '';
+      teams.forEach(t => { const o = el('option', '', t); o.value = t; select.appendChild(o); });
+      select.value = teams.includes(current) ? current : '';
+    }
+
+    // ------------------------------------------------------------------ //
+    // Players
+    // ------------------------------------------------------------------ //
+    let boardRows = [];
+    let highlightSession = null;
+
+    function messageRow(text) {
+      const tr = el('tr');
+      const td = el('td', 'py-10 text-center text-slate-500', text);
+      td.colSpan = 6;
+      tr.appendChild(td);
+      return tr;
+    }
+
     async function loadLeaderboard() {
-      const tbody = document.getElementById('leaderboard-body');
-      let data;
       try {
-        data = await getJson('/public/leaderboard');
+        boardRows = await getJson('/public/leaderboard?limit=200');
       } catch (err) {
-        tbody.replaceChildren(messageRow(6, 'Leaderboard unavailable (' + err.message + '). Retrying...'));
+        document.getElementById('leaderboard-body').replaceChildren(
+          messageRow('Leaderboard unavailable (' + err.message + '). Retrying…'));
         return;
       }
-      if (!data.length) {
-        tbody.replaceChildren(messageRow(6, 'No runs completed yet. Be the first!'));
+      const players = new Set(boardRows.map(r => r.player_name.trim().toLowerCase()));
+      const teams = new Set(boardRows.map(r => r.team).filter(Boolean).map(t => t.toLowerCase()));
+      document.getElementById('stat-players').textContent = players.size;
+      document.getElementById('stat-teams').textContent = teams.size;
+      document.getElementById('stat-best').textContent = boardRows.length ? fmtScore(boardRows[0].score) : '–';
+      refreshTeamFilter(boardRows);
+      renderPlayers();
+      if (activeTab === 'teams') loadTeams();
+    }
+
+    function renderPodium(rows) {
+      const podium = document.getElementById('podium');
+      if (!rows.length) { podium.classList.add('hidden'); return; }
+      podium.classList.remove('hidden');
+      const medals = ['🥇', '🥈', '🥉'];
+      const order = [1, 0, 2];  // silver, gold, bronze
+      podium.replaceChildren(...order.map(i => {
+        const col = el('div', 'flex flex-col items-stretch');
+        const row = rows[i];
+        if (!row) { col.appendChild(el('div', '')); return col; }
+        const card = el('button', `podium-card podium-${i + 1} glass flex flex-col items-center rounded-3xl px-3 pb-4 pt-5 text-center`);
+        card.type = 'button';
+        card.addEventListener('click', () => filterBySession(row.session_id, row.player_name));
+        card.appendChild(el('div', 'text-3xl sm:text-4xl', medals[i]));
+        card.appendChild(avatar(row.player_name, (i === 0 ? 'h-16 w-16 text-2xl' : 'h-12 w-12 text-lg') + ' mt-2'));
+        card.appendChild(el('div', 'font-display mt-3 w-full truncate text-base font-bold text-white sm:text-lg', row.player_name));
+        if (row.team) { const t = teamChip(row.team); t.classList.add('mt-1', 'max-w-full', 'truncate'); card.appendChild(t); }
+        card.appendChild(el('div', 'font-num mt-3 text-2xl font-bold sm:text-3xl ' + (i === 0 ? 'gradient-text' : 'text-slate-100'), fmtScore(row.score)));
+        card.appendChild(el('div', 'font-num mt-1 text-[0.7rem] text-slate-400',
+          fmtTime(row.completion_time_seconds) + ' · ' + row.touch_count + (row.touch_count === 1 ? ' touch' : ' touches')));
+        col.appendChild(card);
+        const step = el('div', `step-${i + 1} font-display mt-2 grid place-items-start justify-center rounded-t-2xl pt-2 text-sm font-bold text-white/70`, '#' + (i + 1));
+        col.appendChild(step);
+        return col;
+      }));
+    }
+
+    function renderPlayers() {
+      const filter = document.getElementById('team-filter').value;
+      const rows = filter ? boardRows.filter(r => r.team === filter) : boardRows;
+      const tbody = document.getElementById('leaderboard-body');
+      renderPodium(rows.slice(0, 3));
+      if (!rows.length) {
+        tbody.replaceChildren(messageRow(filter ? 'No runs for ' + filter + ' yet.' : 'No runs completed yet. Be the first!'));
         return;
       }
-      tbody.replaceChildren(...data.map(row => {
-        const tr = el('tr', 'hover:bg-slate-800/60 transition cursor-pointer');
+      tbody.replaceChildren(...rows.map((row, idx) => {
+        const place = idx + 1;
+        const tr = el('tr', 'row-in cursor-pointer transition hover:bg-white/[0.04]' +
+          (row.session_id && row.session_id === highlightSession ? ' row-new' : ''));
+        tr.style.animationDelay = Math.min(idx, 15) * 25 + 'ms';
         tr.addEventListener('click', () => filterBySession(row.session_id, row.player_name));
-        tr.appendChild(el('td', 'py-3.5 px-4 font-bold ' + (row.rank <= 3 ? 'text-amber-400' : 'text-slate-400'), '#' + row.rank));
-        tr.appendChild(el('td', 'py-3.5 px-4 font-medium text-white', row.player_name));
-        const touches = el('td', 'py-3.5 px-4 text-center');
-        touches.appendChild(el('span', 'px-2 py-0.5 rounded text-xs font-semibold ' +
-          (row.touch_count === 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'), row.touch_count));
+
+        const rank = el('td', 'px-4 py-3 sm:px-5');
+        rank.appendChild(el('span', 'font-num inline-grid h-8 min-w-8 place-items-center rounded-full px-2 text-xs font-bold ' +
+          (place === 1 ? 'bg-amber-400 text-slate-950' : place === 2 ? 'bg-slate-300 text-slate-900' :
+           place === 3 ? 'bg-amber-700 text-amber-50' : 'bg-white/5 text-slate-400'), '#' + place));
+        tr.appendChild(rank);
+
+        const who = el('td', 'px-4 py-3');
+        const wrap = el('div', 'flex min-w-0 items-center gap-3');
+        wrap.appendChild(avatar(row.player_name, 'h-9 w-9 text-xs'));
+        const text = el('div', 'min-w-0');
+        text.appendChild(el('div', 'truncate font-semibold text-white', row.player_name));
+        if (row.team) text.appendChild(teamChip(row.team));
+        wrap.appendChild(text);
+        who.appendChild(wrap);
+        tr.appendChild(who);
+
+        const touches = el('td', 'px-4 py-3 text-center');
+        touches.appendChild(el('span', 'font-num rounded-full px-2.5 py-0.5 text-xs font-bold ' +
+          (row.touch_count === 0 ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'),
+          row.touch_count === 0 ? '0 ✨' : row.touch_count));
         tr.appendChild(touches);
-        tr.appendChild(el('td', 'py-3.5 px-4 text-right font-mono text-slate-300', Number(row.completion_time_seconds).toFixed(2) + 's'));
-        tr.appendChild(el('td', 'py-3.5 px-4 text-right font-bold text-amber-300 font-mono', row.score));
-        const photos = el('td', 'py-3.5 px-4 text-center');
-        photos.appendChild(el('span', 'text-xs text-amber-400 hover:underline', row.session_id ? 'View 📸' : '-'));
+
+        tr.appendChild(el('td', 'font-num px-4 py-3 text-right text-slate-300', fmtTime(row.completion_time_seconds)));
+        tr.appendChild(el('td', 'font-num px-4 py-3 text-right text-base font-bold text-amber-300', fmtScore(row.score)));
+        const photos = el('td', 'px-4 py-3 text-center sm:px-5');
+        photos.appendChild(el('span', 'text-xs text-sky-300 hover:underline', row.session_id ? 'View 📸' : '–'));
         tr.appendChild(photos);
         return tr;
       }));
     }
 
+    // ------------------------------------------------------------------ //
+    // Teams
+    // ------------------------------------------------------------------ //
+    async function loadTeams() {
+      const body = document.getElementById('team-body');
+      let teams;
+      try {
+        teams = await getJson('/public/leaderboard/teams');
+      } catch (err) {
+        body.replaceChildren(el('p', 'glass rounded-3xl py-10 text-center text-sm text-slate-500',
+          'Team standings unavailable (' + err.message + ').'));
+        return;
+      }
+      if (!teams.length) {
+        body.replaceChildren(el('p', 'glass rounded-3xl py-10 text-center text-sm text-slate-500',
+          'No team results yet. Pick a team when starting a game!'));
+        return;
+      }
+      const top = Math.max(...teams.map(t => t.median_score), 1);
+      const medals = ['🥇', '🥈', '🥉'];
+      body.replaceChildren(...teams.map((t, idx) => {
+        const card = el('div', 'team-row row-in glass rounded-3xl p-4 sm:p-5' + (idx === 0 ? ' podium-1' : ''));
+        card.style.setProperty('--h', hue(t.team));
+        card.style.animationDelay = Math.min(idx, 12) * 40 + 'ms';
+
+        const head = el('div', 'flex flex-wrap items-center gap-3 sm:flex-nowrap');
+        head.appendChild(el('div', 'font-display w-10 shrink-0 text-center text-2xl font-bold ' + (idx < 3 ? '' : 'text-slate-500'),
+          idx < 3 ? medals[idx] : '#' + t.rank));
+        const name = el('div', 'min-w-0 flex-1');
+        name.appendChild(el('div', 'team-name font-display truncate text-lg font-bold text-white', t.team));
+        name.appendChild(el('div', 'text-xs text-slate-400',
+          t.players + (t.players === 1 ? ' player' : ' players') + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs') +
+          ' · MVP ' + t.best_player + ' (' + fmtScore(t.best_score) + ')'));
+        head.appendChild(name);
+        const score = el('div', 'text-right');
+        score.appendChild(el('div', 'team-median font-num text-2xl font-bold ' + (idx === 0 ? 'gradient-text' : 'text-white'), fmtScore(t.median_score)));
+        score.appendChild(el('div', 'text-[0.65rem] uppercase tracking-wider text-slate-400', 'median score'));
+        head.appendChild(score);
+        card.appendChild(head);
+
+        const track = el('div', 'mt-4 h-2.5 overflow-hidden rounded-full bg-white/5');
+        const bar = el('div', 'team-bar h-full rounded-full');
+        bar.style.width = '0%';
+        track.appendChild(bar);
+        card.appendChild(track);
+        requestAnimationFrame(() => { bar.style.width = Math.max(4, (t.median_score / top) * 100) + '%'; });
+
+        const meta = el('div', 'font-num mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400');
+        meta.appendChild(el('span', '', '⏱ median ' + fmtTime(t.median_time_seconds)));
+        meta.appendChild(el('span', '', '⚡ median ' + fmtScore(t.median_touches) + ' touches'));
+        card.appendChild(meta);
+        return card;
+      }));
+    }
+
+    // ------------------------------------------------------------------ //
+    // Photos
+    // ------------------------------------------------------------------ //
     let gallerySession = null;
     let galleryPlayer = null;
 
@@ -156,43 +526,38 @@
       const grid = document.getElementById('photo-grid');
       const title = document.getElementById('gallery-title');
       const resetBtn = document.getElementById('reset-gallery-btn');
-
-      if (sessionId) {
-        title.textContent = '📸 ' + playerName + "'s Touch Photos";
-        resetBtn.classList.remove('hidden');
-      } else {
-        title.textContent = '📸 Latest Touch Moments';
-        resetBtn.classList.add('hidden');
-      }
+      title.textContent = sessionId ? '📸 ' + playerName + "'s Touch Photos" : '📸 Latest Touch Moments';
+      resetBtn.classList.toggle('hidden', !sessionId);
 
       let photos;
       try {
-        const url = sessionId
-          ? '/public/photos?session_id=' + encodeURIComponent(sessionId)
-          : '/public/photos';
-        photos = await getJson(url);
+        photos = await getJson(sessionId ? '/public/photos?session_id=' + encodeURIComponent(sessionId) : '/public/photos');
       } catch (err) {
-        grid.replaceChildren(el('p', 'text-slate-500 text-sm col-span-2 py-8 text-center', 'Photos unavailable (' + err.message + ').'));
+        grid.replaceChildren(el('p', 'col-span-2 py-8 text-center text-sm text-slate-500', 'Photos unavailable (' + err.message + ').'));
         return;
       }
-      if (sessionId !== gallerySession) return; // a newer request superseded this one
+      if (sessionId !== gallerySession) return; // superseded by a newer request
 
       if (!photos.length) {
-        grid.replaceChildren(el('p', 'text-slate-500 text-sm col-span-2 py-8 text-center',
+        grid.replaceChildren(el('p', 'glass col-span-2 rounded-3xl py-10 text-center text-sm text-slate-500',
           'No touch photos found ' + (playerName ? 'for ' + playerName : 'yet') + ' — steady hands!'));
         return;
       }
-
-      grid.replaceChildren(...photos.map(p => {
-        const card = el('div', 'bg-slate-900 border border-slate-800 hover:border-amber-400/60 rounded-xl overflow-hidden shadow transition cursor-pointer group');
+      grid.replaceChildren(...photos.map((p, idx) => {
+        const card = el('button', 'group relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900 text-left shadow-lg transition hover:border-amber-300/60' +
+          (idx === 0 && !sessionId ? ' col-span-2' : ''));
+        card.type = 'button';
         card.addEventListener('click', () => openLightbox(p.url));
-        const frame = el('div', 'aspect-video bg-slate-950 overflow-hidden');
-        const img = el('img', 'w-full h-full object-cover group-hover:scale-105 transition duration-300');
+        const frame = el('div', 'aspect-video overflow-hidden');
+        const img = el('img', 'h-full w-full object-cover transition duration-500 group-hover:scale-105');
         img.src = p.url;
         img.loading = 'lazy';
         img.alt = 'Touch photo';
         frame.appendChild(img);
         card.appendChild(frame);
+        const when = el('span', 'absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-[0.65rem] text-slate-200',
+          new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        card.appendChild(when);
         return card;
       }));
     }
@@ -200,6 +565,7 @@
     function filterBySession(sessionId, playerName) {
       if (!sessionId) return;
       loadPhotos(sessionId, playerName);
+      document.getElementById('gallery-title').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
     function openLightbox(url) {
@@ -218,33 +584,101 @@
 
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
+    // ------------------------------------------------------------------ //
+    // Live session
+    // ------------------------------------------------------------------ //
+    let live = null;           // last session payload
+    let liveSyncedAt = 0;      // performance.now() when `live` arrived
+    let lastTouches = 0;
+
     function updateBanner(s) {
       const banner = document.getElementById('live-banner');
       if (!s || !s.active) {
+        live = null;
         banner.classList.add('hidden');
-        banner.classList.remove('flex');
         return;
       }
+      const isNewPlayer = !live || live.session_id !== s.session_id;
+      live = s;
+      liveSyncedAt = performance.now();
       banner.classList.remove('hidden');
-      banner.classList.add('flex');
+
       document.getElementById('live-player').textContent = s.player_name;
+      const av = document.getElementById('live-avatar');
+      av.textContent = initials(s.player_name);
+      av.style.setProperty('--h', hue(s.player_name));
+      const team = document.getElementById('live-team');
+      team.textContent = s.team || '';
+      team.style.setProperty('--h', hue(s.team));
+      team.classList.toggle('hidden', !s.team);
       document.getElementById('live-phase').textContent = s.phase;
-      document.getElementById('live-touches').textContent = s.touch_count;
+      document.getElementById('live-score').textContent = s.phase === 'running' ? fmtScore(s.live_score) : '–';
+      document.getElementById('live-hint').textContent = s.phase === 'running'
+        ? 'Follow the wire to the END hook. Every touch costs points!'
+        : 'Get ready: lift the wand off the START hook to begin.';
+
+      const touches = document.getElementById('live-touches');
+      touches.textContent = s.touch_count;
+      if (!isNewPlayer && s.touch_count > lastTouches) {
+        touches.classList.remove('bump');
+        void touches.offsetWidth;  // restart the animation
+        touches.classList.add('bump');
+      }
+      lastTouches = s.touch_count;
+      tickTimer();
     }
+
+    function tickTimer() {
+      if (!live) return;
+      const running = live.phase === 'running';
+      const elapsed = Number(live.elapsed_seconds) + (running ? (performance.now() - liveSyncedAt) / 1000 : 0);
+      document.getElementById('live-timer').textContent = elapsed.toFixed(1);
+    }
+    setInterval(tickTimer, 100);
 
     function refreshSession() {
       getJson('/public/session').then(updateBanner).catch(() => {});
     }
+    // While a run is live, resync once a second so the live score keeps falling with time.
+    setInterval(() => { if (live) refreshSession(); }, 1000);
 
-    // Connect SSE for live updates without refreshing (EventSource reconnects by itself).
+    function showToast(entry) {
+      const wrap = document.getElementById('toast-wrap');
+      const toast = el('div', 'toast glass pointer-events-auto flex items-center gap-4 rounded-2xl border-amber-300/40 px-5 py-4 shadow-2xl');
+      toast.appendChild(el('div', 'text-3xl', entry.rank === 1 ? '👑' : entry.rank <= 3 ? '🏅' : '🎉'));
+      const text = el('div', '');
+      text.appendChild(el('div', 'font-display text-base font-bold text-white',
+        entry.player_name + ' finished #' + entry.rank + (entry.rank === 1 ? ' — new leader!' : '')));
+      text.appendChild(el('div', 'font-num text-xs text-slate-300',
+        fmtScore(entry.score) + ' pts · ' + fmtTime(entry.completion_time_seconds) + ' · ' + entry.touch_count + ' touches' +
+        (entry.team ? ' · ' + entry.team : '')));
+      toast.appendChild(text);
+      wrap.replaceChildren(toast);
+      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 6000);
+    }
+
+    // ------------------------------------------------------------------ //
+    // Server-sent events (EventSource reconnects by itself)
+    // ------------------------------------------------------------------ //
+    function setConn(ok) {
+      document.getElementById('conn-dot').className = 'h-2 w-2 rounded-full ' + (ok ? 'live-dot bg-emerald-400 text-emerald-400' : 'bg-rose-500');
+      document.getElementById('conn-text').textContent = ok ? 'Live' : 'Reconnecting…';
+    }
+
     const evt = new EventSource('/public/events/stream');
     evt.addEventListener('session_update', e => updateBanner(JSON.parse(e.data)));
-    evt.addEventListener('game_complete', () => { loadLeaderboard(); loadPhotos(gallerySession, galleryPlayer); });
+    evt.addEventListener('game_complete', e => {
+      const entry = JSON.parse(e.data);
+      highlightSession = entry.session_id;
+      showToast(entry);
+      loadLeaderboard();
+      loadPhotos(gallerySession, galleryPlayer);
+    });
     evt.addEventListener('photo_uploaded', () => loadPhotos(gallerySession, galleryPlayer));
     evt.addEventListener('leaderboard_cleared', () => loadLeaderboard());
-    evt.addEventListener('connected', () => { refreshSession(); loadLeaderboard(); }); // resync after reconnects
+    evt.addEventListener('connected', () => { setConn(true); refreshSession(); loadLeaderboard(); }); // resync after reconnects
+    evt.onerror = () => setConn(false);
 
-    // Initial load
     refreshSession();
     loadLeaderboard();
     loadPhotos();

@@ -117,6 +117,20 @@
                      class="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none"
                      placeholder="Enter player name" />
             </label>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label class="block text-sm">
+                <span class="mb-2 block">Team / competency</span>
+                <select id="player-team" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none">
+                  <option value="">Select a team…</option>
+                </select>
+              </label>
+              <label id="player-team-other-wrap" class="block hidden text-sm">
+                <span class="mb-2 block">Team name</span>
+                <input id="player-team-other" type="text" maxlength="32" autocomplete="off"
+                       class="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none"
+                       placeholder="e.g. Platform Engineering" />
+              </label>
+            </div>
             <div class="flex flex-wrap gap-3">
               <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 font-bold text-white hover:bg-blue-700">
                 Start game
@@ -137,6 +151,7 @@
             <div class="rounded-lg bg-slate-50 p-3">
               <div class="text-xs text-slate-600">Player</div>
               <div id="st-player" class="truncate text-lg font-bold">-</div>
+              <div id="st-team" class="truncate text-xs text-slate-500"></div>
             </div>
             <div class="rounded-lg bg-slate-50 p-3">
               <div class="text-xs text-slate-600">Faults</div>
@@ -168,13 +183,14 @@
                 <tr>
                   <th class="py-3 pr-3">Rank</th>
                   <th class="py-3 pr-3">Player</th>
+                  <th class="py-3 pr-3">Team</th>
                   <th class="py-3 pr-3 text-right">Score</th>
                   <th class="py-3 pr-3 text-right">Time (s)</th>
                   <th class="py-3 text-right">Faults</th>
                 </tr>
               </thead>
               <tbody id="leaderboard-body" class="divide-y divide-slate-200">
-                <tr><td colspan="5" class="py-6 text-center text-slate-500">Loading leaderboard...</td></tr>
+                <tr><td colspan="6" class="py-6 text-center text-slate-500">Loading leaderboard...</td></tr>
               </tbody>
             </table>
           </div>
@@ -469,16 +485,86 @@
         showMessage('Game settings are not loaded yet. Check the backend URL / API key and try again.');
         return;
       }
+      const team = selectedTeam();
+      if (!team) {
+        showMessage(document.getElementById('player-team').value === OTHER_TEAM
+          ? 'Type the team name.' : 'Select the player\'s team / competency.');
+        return;
+      }
       try {
         renderSession(await api('/session/start', {
           method: 'POST',
-          body: JSON.stringify({ player_name: name })
+          body: JSON.stringify({ player_name: name, team })
         }));
         document.getElementById('player-name').value = '';
+        rememberTeam(team);
         showMessage('Game started.', 'success');
       } catch (error) {
         showMessage(error.message);
       }
+    });
+
+    // ---- Team / competency picker ---- //
+    const OTHER_TEAM = '__other__';
+    let presetTeams = [];
+
+    function selectedTeam() {
+      const value = document.getElementById('player-team').value;
+      if (value === OTHER_TEAM) return document.getElementById('player-team-other').value.trim().replace(/\s+/g, ' ');
+      return value;
+    }
+
+    function fillTeams(extra = []) {
+      const select = document.getElementById('player-team');
+      const current = select.value;
+      const custom = [...new Set(extra.filter(t => t && !presetTeams.some(p => p.toLowerCase() === t.toLowerCase())))]
+        .sort((a, b) => a.localeCompare(b));
+      select.replaceChildren();
+      const add = (value, label, parent = select) => {
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = label;
+        parent.appendChild(o);
+      };
+      add('', 'Select a team…');
+      const presets = document.createElement('optgroup');
+      presets.label = 'Competencies';
+      presetTeams.forEach(t => add(t, t, presets));
+      select.appendChild(presets);
+      if (custom.length) {
+        const used = document.createElement('optgroup');
+        used.label = 'Teams already playing';
+        custom.forEach(t => add(t, t, used));
+        select.appendChild(used);
+      }
+      add(OTHER_TEAM, 'Other… (type a name)');
+      if ([...select.options].some(o => o.value === current)) select.value = current;
+    }
+
+    async function loadTeams() {
+      try {
+        const res = await fetch(backendUrl + '/public/teams');
+        if (res.ok) presetTeams = (await res.json()).teams || [];
+      } catch (_) {
+        // Keep whatever we had; the backend status indicator already reports outages.
+      }
+      fillTeams(knownCustomTeams);
+    }
+
+    let knownCustomTeams = [];
+    function rememberTeam(team) {
+      if (!knownCustomTeams.includes(team)) knownCustomTeams.push(team);
+      fillTeams(knownCustomTeams);
+      // Keep the team selected for the next player from the same group.
+      document.getElementById('player-team').value = team;
+      document.getElementById('player-team-other-wrap').classList.add('hidden');
+      document.getElementById('player-team-other').value = '';
+    }
+
+    document.getElementById('player-team').addEventListener('change', event => {
+      const other = event.target.value === OTHER_TEAM;
+      document.getElementById('player-team-other-wrap').classList.toggle('hidden', !other);
+      if (other) document.getElementById('player-team-other').focus();
     });
 
     async function abortSession() {
@@ -494,6 +580,7 @@
       session = data;
       const active = Boolean(data && data.active);
       document.getElementById('st-player').textContent = active ? data.player_name : '-';
+      document.getElementById('st-team').textContent = active && data.team ? data.team : '';
       document.getElementById('st-touches').textContent = active ? data.touch_count : '0';
       document.getElementById('st-timer').textContent =
         active ? Number(data.elapsed_seconds).toFixed(1) + ' s' : '0.0 s';
@@ -521,24 +608,27 @@
       button.disabled = true;
       try {
         const rows = await api('/leaderboard?limit=20');
+        const before = knownCustomTeams.length;
+        rows.forEach(r => { if (r.team && !knownCustomTeams.includes(r.team)) knownCustomTeams.push(r.team); });
+        if (knownCustomTeams.length !== before) fillTeams(knownCustomTeams);
         const tbody = document.getElementById('leaderboard-body');
         tbody.replaceChildren();
         if (!rows.length) {
           const row = tbody.insertRow();
           const cell = row.insertCell();
-          cell.colSpan = 5;
+          cell.colSpan = 6;
           cell.className = 'py-6 text-center text-slate-500';
           cell.textContent = 'No completed games yet.';
           return;
         }
         rows.forEach(item => {
           const row = tbody.insertRow();
-          [item.rank, item.player_name, item.score,
+          [item.rank, item.player_name, item.team || '–', item.score,
             Number(item.completion_time_seconds).toFixed(2), item.touch_count].forEach((value, index) => {
             const cell = row.insertCell();
             cell.textContent = value;
             cell.className = 'py-3 pr-3 ' + (index === 0 ? 'font-bold text-blue-700' : '') +
-              (index >= 2 ? ' text-right font-mono' : '');
+              (index === 2 ? ' text-slate-600' : '') + (index >= 3 ? ' text-right font-mono' : '');
           });
         });
       } catch (error) {
@@ -581,7 +671,7 @@
 
     async function initialize() {
       try {
-        await Promise.all([loadConfig(), loadSession(), loadLeaderboard()]);
+        await Promise.all([loadConfig(), loadSession(), loadLeaderboard(), loadTeams()]);
       } catch (error) {
         showMessage(error.message);
       }

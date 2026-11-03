@@ -41,6 +41,8 @@ def page_factory(browser, backend):
         # Keep the tests offline/deterministic: styling CDN isn't needed for behaviour.
         # Stub only the utility classes the pages toggle for visibility.
         page.route("https://cdn.tailwindcss.com/**", lambda route: route.fulfill(body=TAILWIND_STUB, content_type="text/javascript"))
+        page.route("https://fonts.googleapis.com/**", lambda route: route.fulfill(body="", content_type="text/css"))
+        page.route("https://fonts.gstatic.com/**", lambda route: route.abort())
         page.goto(backend.url + path)
         pages.append(ctx)
         return page
@@ -74,8 +76,12 @@ def test_admin_full_game(page_factory, backend):
 
     page.fill("#player-name", "Alice")
     page.click("text=Start game")
+    sync_api.expect(page.locator("#flash")).to_contain_text("team")    # team is required
+    page.select_option("#player-team", "Data Science")
+    page.click("text=Start game")
     sync_api.expect(page.locator("#flash")).to_have_text("Game started.")
     sync_api.expect(page.locator("#st-player")).to_have_text("Alice")
+    sync_api.expect(page.locator("#st-team")).to_have_text("Data Science")
     sync_api.expect(page.locator("#session-message")).to_contain_text("Waiting for the player")
 
     sid = backend.http.get("/api/v1/session").json()["session_id"]
@@ -97,8 +103,13 @@ def test_admin_settings_abort_and_reset(page_factory, backend):
     sync_api.expect(page.locator("#flash")).to_have_text("Settings applied.")
 
     page.fill("#player-name", "Bob")
+    page.select_option("#player-team", "__other__")
+    page.fill("#player-team-other", "  Platform   Crew ")
     page.click("text=Start game")
     sync_api.expect(page.locator("#st-player")).to_have_text("Bob")
+    assert backend.http.get("/api/v1/session").json()["team"] == "Platform Crew"
+    # The custom team is offered (and kept selected) for the next player.
+    sync_api.expect(page.locator("#player-team")).to_have_value("Platform Crew")
     page.click("text=Abort game")
     sync_api.expect(page.locator("#flash")).to_have_text("Game aborted.")
     assert backend.http.get("/api/v1/session").json()["active"] is False
@@ -224,6 +235,64 @@ def test_public_page_leaderboard_banner_and_xss(page_factory, backend):
     sync_api.expect(page.locator("#gallery-title")).to_have_text("📸 Latest Touch Moments")
 
 
+def _play_api(backend, name, team, touches, seconds):
+    sid = backend.http.post("/api/v1/session/start", json={"player_name": name, "team": team}).json()["session_id"]
+    return device_play(backend, sid, touches, seconds)
+
+
+def test_public_page_podium_teams_tab_and_filter(page_factory, backend):
+    _play_api(backend, "Ada", "Data Science", 0, 3)
+    _play_api(backend, "Bo", "Data Science", 3, 6)
+    _play_api(backend, "Cleo", "Cybersecurity", 1, 5)
+    _play_api(backend, "Dan", "HR", 8, 9)
+
+    page = page_factory("/", api_key=None)
+    sync_api.expect(page.locator("#leaderboard-body tr")).to_have_count(4)
+    sync_api.expect(page.locator("#leaderboard-body tr").first).to_contain_text("Ada")
+    sync_api.expect(page.locator("#leaderboard-body tr").first).to_contain_text("Data Science")
+    sync_api.expect(page.locator("#podium")).to_be_visible()
+    sync_api.expect(page.locator("#podium")).to_contain_text("Ada")
+    sync_api.expect(page.locator("#stat-players")).to_have_text("4")
+    sync_api.expect(page.locator("#stat-teams")).to_have_text("3")
+
+    # Filter players by team.
+    page.select_option("#team-filter", "Data Science")
+    sync_api.expect(page.locator("#leaderboard-body tr")).to_have_count(2)
+    sync_api.expect(page.locator("#leaderboard-body")).not_to_contain_text("Cleo")
+    page.select_option("#team-filter", "")
+    sync_api.expect(page.locator("#leaderboard-body tr")).to_have_count(4)
+
+    # Team tab: ranked by median, filter hidden.
+    page.click("#tab-teams")
+    sync_api.expect(page.locator("#panel-teams")).to_be_visible()
+    sync_api.expect(page.locator("#panel-players")).to_be_hidden()
+    sync_api.expect(page.locator("#team-filter-wrap")).to_be_hidden()
+    rows = page.locator("#team-body .team-row")
+    sync_api.expect(rows).to_have_count(3)
+    expected = [t["team"] for t in backend.http.get("/public/leaderboard/teams").json()]
+    assert [rows.nth(i).locator(".team-name").inner_text() for i in range(3)] == expected
+    sync_api.expect(rows.filter(has_text="Data Science")).to_contain_text("2 players")
+
+    # A finished game shows a toast, refreshes the team tab, and the live card shows the team.
+    sid = backend.http.post("/api/v1/session/start", json={"player_name": "Eli", "team": "HR"}).json()["session_id"]
+    sync_api.expect(page.locator("#live-team")).to_have_text("HR")
+    device_play(backend, sid, 0, 1)
+    sync_api.expect(page.locator("#toast-wrap")).to_contain_text("Eli finished #1")
+    sync_api.expect(rows.filter(has_text="HR")).to_contain_text("2 players")
+
+    page.click("#tab-players")
+    sync_api.expect(page.locator("#leaderboard-body tr").first).to_contain_text("Eli")
+
+
+def test_public_page_live_timer_runs(page_factory, backend):
+    page = page_factory("/", api_key=None)
+    sid = backend.http.post("/api/v1/session/start", json={"player_name": "Tim", "team": "Sales"}).json()["session_id"]
+    sync_api.expect(page.locator("#live-banner")).to_be_visible()
+    sync_api.expect(page.locator("#live-timer")).to_have_text("0.0")
+    backend.http.post("/api/v1/game/run-start", json={"session_id": sid}).raise_for_status()
+    page.wait_for_function("parseFloat(document.getElementById('live-timer').textContent) >= 0.5")
+
+
 def test_streamlit_panel(backend, monkeypatch):
     testing = pytest.importorskip("streamlit.testing.v1")
     from conftest import ROOT
@@ -234,9 +303,13 @@ def test_streamlit_panel(backend, monkeypatch):
     assert at.title[0].value == "⚡ Buzz Wire Control Panel"
     at.text_input[0].input("Streamlit").run()
     next(b for b in at.button if b.label == "Start game").click().run()
+    assert any("team" in e.value for e in at.error)           # team is required
+    assert backend.http.get("/api/v1/session").json()["active"] is False
+    next(s for s in at.selectbox if s.label == "Team / competency").select("Cybersecurity").run()
+    next(b for b in at.button if b.label == "Start game").click().run()
     assert not at.exception and not at.error
     sess = backend.http.get("/api/v1/session").json()
-    assert sess["active"] and sess["player_name"] == "Streamlit"
+    assert sess["active"] and sess["player_name"] == "Streamlit" and sess["team"] == "Cybersecurity"
     next(b for b in at.button if b.label == "Abort game").click().run()
     assert backend.http.get("/api/v1/session").json()["active"] is False
     assert os.environ["BACKEND_URL"] == backend.url

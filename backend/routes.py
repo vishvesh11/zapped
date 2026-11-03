@@ -44,6 +44,8 @@ from schemas import (
     RunStart,
     SessionResponse,
     SessionStart,
+    TeamEntry,
+    TeamsResponse,
     TouchEvent,
     TouchResponse,
 )
@@ -62,6 +64,17 @@ public_router = APIRouter(prefix="/public")
 @public_router.get("/leaderboard", response_model=List[LeaderboardEntry])
 async def public_leaderboard(limit: int = 50):
     return get_board().top(max(1, min(limit, 200)))
+
+
+@public_router.get("/leaderboard/teams", response_model=List[TeamEntry])
+async def public_team_leaderboard():
+    return get_board().teams()
+
+
+@public_router.get("/teams", response_model=TeamsResponse)
+async def list_teams():
+    """Preset competencies for the player form (custom names are accepted too)."""
+    return TeamsResponse(teams=settings.teams)
 
 
 @public_router.get("/session", response_model=SessionResponse)
@@ -230,7 +243,7 @@ async def start_session(body: SessionStart):
     with state.lock:
         if state.session is not None:
             raise HTTPException(status_code=409, detail="a game is already in progress")
-        state.session = Session(id=uuid.uuid4().hex, player_name=body.player_name)
+        state.session = Session(id=uuid.uuid4().hex, player_name=body.player_name, team=body.team)
         resp = session_response()
     broadcaster.broadcast("session_update", resp.model_dump())
     return resp
@@ -308,14 +321,15 @@ async def complete_game(body: CompleteRequest):
                 seconds = server_elapsed
         faults = max(sess.touch_count, body.touch_count)
         name = sess.player_name
+        team = sess.team
         sess_id = sess.id
         state.session = None
 
     seconds = round(seconds, 2)
     score = compute_score(seconds, faults)
-    rank = get_board().add(sess_id, name, faults, seconds, score)
+    rank = get_board().add(sess_id, name, faults, seconds, score, team)
     entry = LeaderboardEntry(
-        rank=rank, player_name=name, touch_count=faults,
+        rank=rank, player_name=name, team=team, touch_count=faults,
         completion_time_seconds=seconds, score=score, session_id=sess_id
     )
     broadcaster.broadcast("game_complete", entry.model_dump())

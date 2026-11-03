@@ -10,7 +10,7 @@ import pytest
 # ---- auth / basics -------------------------------------------------------- #
 def test_health_and_pages(client):
     assert client.get("/health").json() == {"status": "ok"}
-    assert "BUZZ WIRE CHALLENGE" in client.get("/").text
+    assert "Buzz Wire Challenge" in client.get("/").text
     assert "Control Panel" in client.get("/admin").text
 
 
@@ -401,3 +401,112 @@ def test_sound_settings_survive_restart(client):
     (helpers.settings.media_dir_resolved / "fail.wav").unlink()
     helpers.state.load_sounds()
     assert client.get("/api/v1/config").json()["penalty_media_file"] is None
+
+
+# ---- teams ------------------------------------------------------------------ #
+def _play(client, name, team, touches, seconds):
+    body = {"player_name": name}
+    if team is not None:
+        body["team"] = team
+    sid = client.post("/api/v1/session/start", json=body).json()["session_id"]
+    client.post("/api/v1/game/run-start", json={"session_id": sid}).raise_for_status()
+    return client.post("/api/v1/game/complete", json={
+        "session_id": sid, "touch_count": touches, "completion_time_seconds": seconds}).json()
+
+
+def test_team_presets_are_public(client):
+    teams = client.get("/public/teams").json()["teams"]
+    for t in ("Data Science", "Cybersecurity", "HR"):
+        assert t in teams
+
+
+@pytest.mark.parametrize("raw,stored", [
+    ("data science", "Data Science"),        # snaps to the preset spelling
+    ("  CYBERSECURITY ", "Cybersecurity"),
+    ("Platform   Crew", "Platform Crew"),    # custom names kept, whitespace collapsed
+    ("   ", None),
+])
+def test_team_is_normalized(client, raw, stored):
+    s = client.post("/api/v1/session/start", json={"player_name": "N", "team": raw}).json()
+    assert s["team"] == stored
+    assert client.get("/public/session").json()["team"] == stored
+
+
+def test_team_name_length_limit(client):
+    r = client.post("/api/v1/session/start", json={"player_name": "N", "team": "x" * 33})
+    assert r.status_code == 422
+
+
+def test_team_saved_on_leaderboard(client):
+    entry = _play(client, "Ann", "HR", 1, 10)
+    assert entry["team"] == "HR"
+    assert client.get("/public/leaderboard").json()[0]["team"] == "HR"
+
+
+def test_team_leaderboard_uses_median_of_best_scores(client):
+    from helpers import compute_score
+    # (times stay under 10 s: larger device/server disagreements fall back to server time)
+    # Data Science: three players. Median of best scores = Bea's score.
+    _play(client, "Al", "Data Science", 0, 3)     # best overall
+    _play(client, "Bea", "Data Science", 2, 6)
+    _play(client, "Cy", "Data Science", 6, 9)
+    _play(client, "cy ", "data science", 5, 8)    # same player, other spelling: better run counts
+    # HR: one superstar and one weak run -> median is the midpoint.
+    _play(client, "Dee", "HR", 0, 2)
+    _play(client, "Eve", "HR", 9, 9)
+    # No team: ignored for team standings.
+    _play(client, "Solo", None, 0, 1)
+
+    teams = client.get("/public/leaderboard/teams").json()
+    by = {t["team"]: t for t in teams}
+    assert set(by) == {"Data Science", "HR"}
+
+    ds = by["Data Science"]
+    assert ds["players"] == 3 and ds["runs"] == 4
+    assert ds["median_score"] == compute_score(6, 2)
+    assert ds["best_player"] == "Al" and ds["best_score"] == compute_score(3, 0)
+    assert ds["median_time_seconds"] == 6 and ds["median_touches"] == 2
+
+    hr = by["HR"]
+    assert hr["players"] == 2
+    assert hr["median_score"] == round((compute_score(2, 0) + compute_score(9, 9)) / 2, 1)
+
+    assert [t["rank"] for t in teams] == [1, 2]
+    assert teams[0]["median_score"] >= teams[1]["median_score"]
+
+
+def test_team_ties_prefer_more_players(client):
+    _play(client, "A", "Sales", 1, 10)
+    _play(client, "B", "Legal", 1, 10)
+    _play(client, "C", "Legal", 1, 10)
+    teams = client.get("/public/leaderboard/teams").json()
+    assert [t["team"] for t in teams] == ["Legal", "Sales"]
+
+
+def test_team_leaderboard_empty_and_cleared(client):
+    assert client.get("/public/leaderboard/teams").json() == []
+    _play(client, "A", "Finance", 0, 3)
+    assert len(client.get("/public/leaderboard/teams").json()) == 1
+    client.delete("/api/v1/leaderboard").raise_for_status()
+    assert client.get("/public/leaderboard/teams").json() == []
+
+
+def test_old_database_gets_team_column(tmp_path):
+    import sqlite3
+    from helpers import Leaderboard
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.execute("""CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, player_name TEXT NOT NULL,
+                    touch_count INTEGER NOT NULL, completion_time_seconds REAL NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+    conn.execute("INSERT INTO entries (player_name, touch_count, completion_time_seconds) VALUES ('Old', 1, 9)")
+    conn.commit()
+    conn.close()
+    board = Leaderboard(str(db))
+    try:
+        assert board.top(5)[0].team is None
+        board.add("s1", "New", 0, 5, 900, "HR")
+        assert {e.player_name: e.team for e in board.top(5)} == {"Old": None, "New": "HR"}
+        assert [t.team for t in board.teams()] == ["HR"]
+    finally:
+        board.close()
