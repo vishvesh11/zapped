@@ -3,177 +3,530 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Buzz Wire — Admin Control Panel</title>
+  <title>Buzz Wire Control Panel</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen p-6 font-sans">
-  <div class="max-w-3xl mx-auto space-y-6">
-
-    <!-- Top Bar & Audio Unlock -->
-    <div class="flex items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-xl">
+<body class="min-h-screen bg-slate-50 p-4 font-sans text-slate-900 sm:p-6">
+  <main class="mx-auto max-w-7xl space-y-6">
+    <header class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div>
-        <h1 class="text-xl font-bold text-amber-400">⚡ Stall Admin Control</h1>
-        <p class="text-xs text-slate-400">Laptop Speaker Chime & Session Manager</p>
+        <h1 class="text-xl font-bold text-blue-700">⚡ Buzz Wire Control Panel</h1>
+        <p class="text-xs text-slate-600">Game controls, live session, and leaderboard</p>
       </div>
-      <div class="flex items-center gap-3">
-        <button id="audio-btn" onclick="unlockAudio()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-4 py-2 rounded-lg">
-          🔇 Click to Enable Laptop Audio
+      <div class="flex flex-wrap items-center gap-3">
+        <span id="backend-status" role="status" class="text-xs font-medium text-slate-500">Backend: checking...</span>
+        <button id="audio-btn" type="button" onclick="unlockAudio()"
+                class="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-500">
+          🔇 Enable laptop audio
         </button>
-        <button onclick="setApiKey()" class="bg-slate-800 hover:bg-slate-700 text-xs px-3 py-2 rounded-lg">
+        <button type="button" onclick="setBackendUrl()"
+                class="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700 hover:bg-slate-200">
+          Backend URL
+        </button>
+        <button type="button" onclick="setApiKey()"
+                class="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700 hover:bg-slate-200">
           🔑 API Key
         </button>
       </div>
+    </header>
+
+    <p id="flash" role="status" aria-live="polite" class="hidden rounded-lg border px-4 py-3 text-sm"></p>
+    <p class="text-sm text-slate-600">
+      Score = <span id="score-formula">Loading score formula...</span>. Higher is better.
+      The timer starts when the wand leaves the START hook and stops when it is hung on the END hook.
+    </p>
+
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+      <section class="space-y-6">
+        <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 class="text-base font-semibold">Game controls</h2>
+              <p class="mt-1 text-sm text-slate-600">Shock status on the device: <strong id="shock-status">Loading...</strong></p>
+            </div>
+            <button type="button" onclick="emergencyOff()"
+                    class="rounded-lg border border-rose-500/40 bg-rose-600/20 px-4 py-2 text-sm font-semibold text-rose-300 hover:bg-rose-600/30">
+              Emergency: shock OFF
+            </button>
+          </div>
+
+          <form id="settings-form" class="space-y-4">
+            <label class="flex items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <span>
+                <span class="block font-bold">Shock module ON</span>
+                <span class="text-xs text-slate-600">Enable or disable the device shock module</span>
+              </span>
+              <input id="shock-toggle" type="checkbox" class="h-5 w-5 accent-blue-600" />
+            </label>
+
+            <label class="block">
+              <span class="mb-2 flex justify-between text-sm">
+                <span>Shock duration</span>
+                <span><output id="duration-value">-</output> seconds</span>
+              </span>
+              <input id="shock-duration" type="range" min="0.05" max="0.5" step="0.05"
+                     class="w-full accent-blue-600" />
+              <span id="duration-range" class="mt-1 block text-xs text-slate-500"></span>
+            </label>
+
+            <label class="block text-sm">
+              <span class="mb-2 block">Chime sound</span>
+              <select id="media-file" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none"></select>
+            </label>
+
+            <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 font-bold text-white hover:bg-blue-700">
+              Apply settings
+            </button>
+          </form>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 class="text-base font-semibold">Player</h2>
+          <p class="mb-4 mt-2 text-sm leading-relaxed text-slate-600">
+            Click Start, then hang the wand on the START hook. Lift it to begin.
+            Hang it on the END hook to finish. Between games the circuit is disarmed,
+            so you can carry the wand back to the start safely.
+          </p>
+          <form id="player-form" class="space-y-4">
+            <label class="block text-sm">
+              <span class="mb-2 block">Player name</span>
+              <input id="player-name" type="text" maxlength="24" autocomplete="off"
+                     class="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none"
+                     placeholder="Enter player name" />
+            </label>
+            <label class="flex items-start gap-3 text-sm text-slate-700">
+              <input id="player-consent" type="checkbox" class="mt-0.5 h-4 w-4 accent-blue-600" />
+              <span>Player has been warned about the shock and agrees to play</span>
+            </label>
+            <div class="flex flex-wrap gap-3">
+              <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 font-bold text-white hover:bg-blue-700">
+                Start game
+              </button>
+              <button type="button" onclick="abortSession()"
+                      class="rounded-lg border border-rose-500/40 bg-rose-600/20 px-5 py-2.5 font-semibold text-rose-300 hover:bg-rose-600/30">
+                Abort game
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="space-y-6">
+        <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 class="mb-4 text-base font-semibold">Live session</h2>
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div class="rounded-lg bg-slate-50 p-3">
+              <div class="text-xs text-slate-600">Player</div>
+              <div id="st-player" class="truncate text-lg font-bold">-</div>
+            </div>
+            <div class="rounded-lg bg-slate-50 p-3">
+              <div class="text-xs text-slate-600">Faults</div>
+              <div id="st-touches" class="font-mono text-2xl font-bold text-rose-400">0</div>
+            </div>
+            <div class="rounded-lg bg-slate-50 p-3">
+              <div class="text-xs text-slate-600">Timer</div>
+              <div id="st-timer" class="font-mono text-2xl font-bold">0.0 s</div>
+            </div>
+            <div class="rounded-lg bg-slate-50 p-3">
+              <div class="text-xs text-slate-600">Score</div>
+              <div id="st-score" class="font-mono text-2xl font-bold text-blue-700">-</div>
+            </div>
+          </div>
+          <div id="session-message" class="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            Checking session...
+          </div>
+          <p class="mt-3 text-xs text-slate-600">Shocks fired this game: <strong id="st-shocks">0</strong></p>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-base font-semibold">Leaderboard</h2>
+            <button id="refresh-board" type="button" onclick="loadLeaderboard()"
+                    class="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700 hover:bg-slate-200">Refresh</button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="border-b border-slate-200 text-xs uppercase text-slate-600">
+                <tr>
+                  <th class="py-3 pr-3">Rank</th>
+                  <th class="py-3 pr-3">Player</th>
+                  <th class="py-3 pr-3 text-right">Score</th>
+                  <th class="py-3 pr-3 text-right">Time (s)</th>
+                  <th class="py-3 text-right">Faults</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboard-body" class="divide-y divide-slate-200">
+                <tr><td colspan="5" class="py-6 text-center text-slate-500">Loading leaderboard...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details class="mt-5 border-t border-slate-200 pt-4">
+            <summary class="cursor-pointer text-sm font-medium text-slate-700">Reset leaderboard</summary>
+            <label class="mt-3 flex items-start gap-3 text-sm text-slate-600">
+              <input id="reset-confirm" type="checkbox" class="mt-0.5 h-4 w-4 accent-rose-500" />
+              <span>I want to delete all scores</span>
+            </label>
+            <button id="reset-button" type="button" onclick="resetLeaderboard()" disabled
+                    class="mt-3 rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white enabled:hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40">
+              Delete all scores
+            </button>
+          </details>
+        </div>
+      </section>
     </div>
+  </main>
 
-    <!-- Arm New Player Session -->
-    <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
-      <h2 class="text-base font-semibold">1. Arm Player Session</h2>
-      <div class="flex gap-3">
-        <input id="player-name" type="text" maxlength="24" placeholder="Enter Player Name..."
-               class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-amber-400" />
-        <button onclick="startSession()" class="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-6 py-2.5 rounded-lg">
-          Arm Game
-        </button>
-        <button onclick="abortSession()" class="bg-rose-600/20 border border-rose-500/40 hover:bg-rose-600/30 text-rose-300 font-semibold px-4 py-2.5 rounded-lg">
-          Abort
-        </button>
-      </div>
-
-      <!-- Live Session Telemetry -->
-      <div class="grid grid-cols-4 gap-4 pt-3 border-t border-slate-800 text-center">
-        <div class="bg-slate-950 p-3 rounded-lg">
-          <div class="text-xs text-slate-400">Player</div>
-          <div id="st-player" class="text-lg font-bold text-white truncate">-</div>
-        </div>
-        <div class="bg-slate-950 p-3 rounded-lg">
-          <div class="text-xs text-slate-400">Phase</div>
-          <div id="st-phase" class="text-lg font-bold text-amber-400">IDLE</div>
-        </div>
-        <div class="bg-slate-950 p-3 rounded-lg">
-          <div class="text-xs text-slate-400">Touches (Faults)</div>
-          <div id="st-touches" class="text-2xl font-mono font-bold text-rose-400">0</div>
-        </div>
-        <div class="bg-slate-950 p-3 rounded-lg">
-          <div class="text-xs text-slate-400">Shocks Fired</div>
-          <div id="st-shocks" class="text-2xl font-mono font-bold text-amber-300">0</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Hardware Mode Configuration -->
-    <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
-      <h2 class="text-base font-semibold">2. Game Mode & Hardware Settings</h2>
-      <div class="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-slate-800">
-        <div>
-          <div class="font-bold text-white">⚡ Electric Shock Mode</div>
-          <div class="text-xs text-slate-400">Toggle between Shock Mode and Shockless (Audio-only) Mode</div>
-        </div>
-        <button id="shock-toggle" onclick="toggleShock()" class="px-5 py-2 rounded-lg font-bold text-sm bg-slate-800 text-slate-300">
-          OFF (Shockless)
-        </button>
-      </div>
-    </div>
-
-  </div>
-
+  <audio id="chime" src="/public/media/chime.wav" preload="auto"></audio>
   <script>
     let apiKey = localStorage.getItem('BUZZ_API_KEY') || '';
-    let shockEnabled = false;
-    const chime = new Audio('/public/media/chime.wav');
+    const defaultBackendUrl = location.protocol === 'http:' || location.protocol === 'https:'
+      ? location.origin
+      : 'http://localhost:8000';
+    let backendUrl = localStorage.getItem('BUZZ_BACKEND_URL') || defaultBackendUrl;
+    let scoreBase = 1000;
+    let scorePerSecond = 5;
+    let scorePerFault = 50;
+    let shockEnabled = null;
+    let session = null;
+    let audioUnlocked = false;
+    let chimeAudioUrl = new URL('/public/media/chime.wav', backendUrl).href;
+    let events;
+    const chime = document.getElementById('chime');
+
+    function setBackendStatus(message, connected) {
+      const status = document.getElementById('backend-status');
+      status.textContent = 'Backend: ' + message;
+      status.className = 'text-xs font-medium ' +
+        (connected ? 'text-emerald-700' : 'text-rose-700');
+    }
 
     function headers() {
       return { 'Content-Type': 'application/json', 'X-API-Key': apiKey };
     }
 
-    function setApiKey() {
-      const k = prompt('Enter GAME_API_KEY (leave blank if unused):', apiKey);
-      if (k !== null) {
-        apiKey = k;
-        localStorage.setItem('BUZZ_API_KEY', apiKey);
-        loadConfig();
+    function showMessage(message, kind = 'error') {
+      const el = document.getElementById('flash');
+      el.textContent = message;
+      el.className = 'rounded-lg border px-4 py-3 text-sm ' +
+        (kind === 'success'
+          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+          : 'border-rose-500/40 bg-rose-500/10 text-rose-300');
+    }
+
+    async function api(path, options = {}) {
+      let response;
+      try {
+        response = await fetch(backendUrl + '/api/v1' + path, {
+          ...options,
+          headers: { ...headers(), ...(options.headers || {}) }
+        });
+      } catch (error) {
+        setBackendStatus('unreachable', false);
+        throw new Error('Backend unreachable: ' + error.message);
+      }
+
+      if (!response.ok) {
+        let detail = response.statusText;
+        try {
+          const body = await response.json();
+          detail = body.detail || detail;
+        } catch (_) {
+          // Use the HTTP status when the response is not JSON.
+        }
+        setBackendStatus(
+          response.status === 401 ? 'API key rejected (401)' : 'HTTP ' + response.status,
+          false
+        );
+        throw new Error(response.status + ': ' + detail);
+      }
+
+      setBackendStatus('connected', true);
+      if (response.status === 204) return null;
+      try {
+        return await response.json();
+      } catch (_) {
+        throw new Error('Backend returned invalid JSON');
       }
     }
 
-    function unlockAudio() {
-      chime.play().then(() => {
+    function setApiKey() {
+      const key = prompt('Enter GAME_API_KEY (leave blank if unused):', apiKey);
+      if (key !== null) {
+        apiKey = key;
+        localStorage.setItem('BUZZ_API_KEY', apiKey);
+        initialize();
+      }
+    }
+
+    function setBackendUrl() {
+      const value = prompt(
+        'Enter the backend address, including http:// or https:// (example: http://localhost:8000):',
+        backendUrl
+      );
+      if (value === null) return;
+
+      try {
+        const parsed = new URL(value.trim());
+        if (!['http:', 'https:'].includes(parsed.protocol) ||
+            parsed.pathname !== '/' || parsed.search || parsed.hash) {
+          throw new Error('Enter only the backend origin, such as http://localhost:8000.');
+        }
+        backendUrl = parsed.origin;
+        localStorage.setItem('BUZZ_BACKEND_URL', backendUrl);
+        connectEvents();
+        initialize();
+      } catch (error) {
+        showMessage('Invalid backend address: ' + error.message);
+      }
+    }
+
+    async function unlockAudio() {
+      try {
+        chime.src = chimeAudioUrl;
+        await chime.play();
         chime.pause();
         chime.currentTime = 0;
-        const btn = document.getElementById('audio-btn');
-        btn.innerText = '🔊 Laptop Audio Active';
-        btn.className = 'bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-lg';
-      }).catch(err => alert('Audio unlock failed: ' + err));
+        audioUnlocked = true;
+        const button = document.getElementById('audio-btn');
+        button.textContent = '🔊 Laptop audio active';
+        button.className = 'rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white';
+      } catch (error) {
+        showMessage('Audio unlock failed: ' + error.message);
+      }
+    }
+
+    function renderConfig(config) {
+      shockEnabled = config.shock_enabled;
+      scoreBase = config.score_base;
+      scorePerSecond = config.score_per_second;
+      scorePerFault = config.score_per_fault;
+      document.getElementById('score-formula').textContent =
+        scoreBase + ' − ' + scorePerSecond + ' × seconds − ' + scorePerFault + ' × faults (minimum 0)';
+      document.getElementById('shock-status').textContent = config.shock_enabled ? 'ARMED' : 'OFF';
+      document.getElementById('shock-status').className =
+        config.shock_enabled ? 'text-rose-300' : 'text-emerald-300';
+      document.getElementById('shock-toggle').checked = config.shock_enabled;
+
+      const duration = document.getElementById('shock-duration');
+      duration.min = config.shock_duration_min;
+      duration.max = config.shock_duration_max;
+      duration.value = config.shock_duration;
+      document.getElementById('duration-range').textContent =
+        'Allowed: ' + config.shock_duration_min + '–' + config.shock_duration_max + ' seconds';
+      updateDurationLabel();
+
+      chimeAudioUrl = new URL(
+        '/public/media/' + encodeURIComponent(config.current_media_file),
+        backendUrl
+      ).href;
+      chime.src = chimeAudioUrl;
+      const currentChoice = config.current_media_file;
+      loadMedia(currentChoice);
+    }
+
+    function updateDurationLabel() {
+      document.getElementById('duration-value').textContent =
+        Number(document.getElementById('shock-duration').value).toFixed(2);
+    }
+
+    async function loadMedia(currentChoice) {
+      try {
+        const result = await api('/media');
+        const select = document.getElementById('media-file');
+        const files = result.files || [];
+        if (currentChoice && !files.includes(currentChoice)) files.unshift(currentChoice);
+        select.replaceChildren();
+        files.forEach(file => {
+          const option = document.createElement('option');
+          option.value = file;
+          option.textContent = file;
+          select.appendChild(option);
+        });
+        if (currentChoice && files.includes(currentChoice)) select.value = currentChoice;
+        select.disabled = files.length === 0;
+      } catch (error) {
+        showMessage(error.message);
+      }
     }
 
     async function loadConfig() {
-      const res = await fetch('/api/v1/config', { headers: headers() });
-      if (!res.ok) return;
-      const cfg = await res.json();
-      renderConfig(cfg);
+      renderConfig(await api('/config'));
     }
 
-    function renderConfig(cfg) {
-      shockEnabled = cfg.shock_enabled;
-      const btn = document.getElementById('shock-toggle');
-      if (shockEnabled) {
-        btn.innerText = '⚡ ON (SHOCK ACTIVE)';
-        btn.className = 'px-5 py-2 rounded-lg font-bold text-sm bg-amber-400 text-slate-950';
-      } else {
-        btn.innerText = 'OFF (Shockless Mode)';
-        btn.className = 'px-5 py-2 rounded-lg font-bold text-sm bg-slate-800 text-slate-300';
+    document.getElementById('settings-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      try {
+        const config = await api('/config', {
+          method: 'POST',
+          body: JSON.stringify({
+            shock_enabled: document.getElementById('shock-toggle').checked,
+            shock_duration: Number(document.getElementById('shock-duration').value),
+            current_media_file: document.getElementById('media-file').value
+          })
+        });
+        renderConfig(config);
+        showMessage('Settings applied.', 'success');
+      } catch (error) {
+        showMessage(error.message);
+      }
+    });
+
+    async function emergencyOff() {
+      try {
+        renderConfig(await api('/config', {
+          method: 'POST',
+          body: JSON.stringify({ shock_enabled: false })
+        }));
+        showMessage('Shock disarmed.', 'success');
+      } catch (error) {
+        showMessage(error.message);
       }
     }
 
-    async function toggleShock() {
-      const res = await fetch('/api/v1/config', {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({ shock_enabled: !shockEnabled })
-      });
-      if (res.ok) renderConfig(await res.json());
-    }
-
-    async function startSession() {
-      const nameInput = document.getElementById('player-name');
-      const player_name = nameInput.value.trim();
-      if (!player_name) return alert('Enter a player name first');
-      const res = await fetch('/api/v1/session/start', {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({ player_name })
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        return alert(err.detail || 'Error starting session');
+    document.getElementById('player-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const name = document.getElementById('player-name').value.trim();
+      if (!name) {
+        showMessage('Enter a player name first.');
+        return;
       }
-      nameInput.value = '';
-      renderSession(await res.json());
-    }
+      if (shockEnabled === null) {
+        showMessage('Game settings are not loaded yet. Please try again.');
+        return;
+      }
+      if (shockEnabled &&
+          !document.getElementById('player-consent').checked) {
+        showMessage("Confirm the player's consent, or turn the shock OFF.");
+        return;
+      }
+      try {
+        renderSession(await api('/session/start', {
+          method: 'POST',
+          body: JSON.stringify({ player_name: name })
+        }));
+        document.getElementById('player-name').value = '';
+        showMessage('Game started.', 'success');
+      } catch (error) {
+        showMessage(error.message);
+      }
+    });
 
     async function abortSession() {
-      const res = await fetch('/api/v1/session', { method: 'DELETE', headers: headers() });
-      if (res.ok) renderSession(await res.json());
+      try {
+        renderSession(await api('/session', { method: 'DELETE' }));
+        showMessage('Game aborted.', 'success');
+      } catch (error) {
+        showMessage(error.message);
+      }
     }
 
-    function renderSession(s) {
-      document.getElementById('st-player').innerText = s.active ? s.player_name : '-';
-      document.getElementById('st-phase').innerText = s.active ? s.phase.toUpperCase() : 'IDLE';
-      document.getElementById('st-touches').innerText = s.touch_count || 0;
-      document.getElementById('st-shocks').innerText = s.shocks_fired || 0;
+    function renderSession(data) {
+      session = data;
+      const active = Boolean(data && data.active);
+      document.getElementById('st-player').textContent = active ? data.player_name : '-';
+      document.getElementById('st-touches').textContent = active ? data.touch_count : '0';
+      document.getElementById('st-shocks').textContent = active ? data.shocks_fired : '0';
+      document.getElementById('st-timer').textContent =
+        active ? Number(data.elapsed_seconds).toFixed(1) + ' s' : '0.0 s';
+      document.getElementById('st-score').textContent = active ? data.live_score : '-';
+
+      const message = document.getElementById('session-message');
+      if (!active) {
+        message.textContent = 'No active game. Enter a name and press Start.';
+        message.className = 'mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600';
+      } else if (data.phase === 'waiting') {
+        message.textContent = 'Waiting for the player: hang the wand on the START hook, then lift it to begin. Timer stays at 0 until the wand leaves the hook.';
+        message.className = 'mt-4 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-800';
+      } else {
+        message.textContent = 'Running. Hang the wand on the END hook to finish.';
+        message.className = 'mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200';
+      }
     }
 
-    // Live SSE Listener for Instant Chime & Telemetry
-    const evt = new EventSource('/public/events/stream');
-    evt.addEventListener('play_chime', e => {
-      const data = JSON.parse(e.data);
-      chime.src = data.audio_url;
-      chime.currentTime = 0;
-      chime.play().catch(err => console.warn('Click Enable Audio button first:', err));
+    async function loadSession() {
+      renderSession(await api('/session'));
+    }
+
+    async function loadLeaderboard() {
+      const button = document.getElementById('refresh-board');
+      button.disabled = true;
+      try {
+        const rows = await api('/leaderboard?limit=20');
+        const tbody = document.getElementById('leaderboard-body');
+        tbody.replaceChildren();
+        if (!rows.length) {
+          const row = tbody.insertRow();
+          const cell = row.insertCell();
+          cell.colSpan = 5;
+          cell.className = 'py-6 text-center text-slate-500';
+          cell.textContent = 'No completed games yet.';
+          return;
+        }
+        rows.forEach(item => {
+          const row = tbody.insertRow();
+          [item.rank, item.player_name, item.score,
+            Number(item.completion_time_seconds).toFixed(2), item.touch_count].forEach((value, index) => {
+            const cell = row.insertCell();
+            cell.textContent = value;
+            cell.className = 'py-3 pr-3 ' + (index === 0 ? 'font-bold text-blue-700' : '') +
+              (index >= 2 ? ' text-right font-mono' : '');
+          });
+        });
+      } catch (error) {
+        showMessage(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function resetLeaderboard() {
+      if (!document.getElementById('reset-confirm').checked) return;
+      try {
+        await api('/leaderboard', { method: 'DELETE' });
+        await loadLeaderboard();
+        showMessage('Leaderboard cleared.', 'success');
+      } catch (error) {
+        showMessage(error.message);
+      }
+    }
+
+    document.getElementById('shock-duration').addEventListener('input', updateDurationLabel);
+    document.getElementById('reset-confirm').addEventListener('change', event => {
+      document.getElementById('reset-button').disabled = !event.target.checked;
     });
-    evt.addEventListener('session_update', e => renderSession(JSON.parse(e.data)));
-    evt.addEventListener('config_update', e => renderConfig(JSON.parse(e.data)));
 
-    loadConfig();
-    fetch('/public/session').then(r => r.json()).then(renderSession);
+    function connectEvents() {
+      if (events) events.close();
+      events = new EventSource(backendUrl + '/public/events/stream');
+      events.addEventListener('play_chime', event => {
+        const data = JSON.parse(event.data);
+        chimeAudioUrl = new URL(data.audio_url, backendUrl).href;
+        chime.src = chimeAudioUrl;
+        chime.currentTime = 0;
+        if (audioUnlocked) chime.play().catch(error => console.warn('Chime playback failed:', error));
+      });
+      events.addEventListener('session_update', event => renderSession(JSON.parse(event.data)));
+      events.addEventListener('config_update', event => renderConfig(JSON.parse(event.data)));
+      events.addEventListener('game_complete', () => loadLeaderboard());
+      events.addEventListener('leaderboard_cleared', () => loadLeaderboard());
+    }
+
+    async function initialize() {
+      try {
+        await Promise.all([loadConfig(), loadSession(), loadLeaderboard()]);
+      } catch (error) {
+        showMessage(error.message);
+      }
+    }
+
+    connectEvents();
+    initialize();
+    window.setInterval(() => {
+      loadSession().catch(error => showMessage(error.message));
+    }, 1000);
+    window.setInterval(() => {
+      loadLeaderboard();
+    }, 3000);
   </script>
 </body>
 </html>
