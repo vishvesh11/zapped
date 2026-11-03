@@ -16,7 +16,7 @@ RUN mkdir -p /app/data /app/media
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/main.py .
+COPY backend/main.py backend/config.py backend/helpers.py backend/routes.py backend/schemas.py ./
 COPY backend/templates/ ./templates/
 
 # Environment defaults for k3s
