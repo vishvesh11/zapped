@@ -95,8 +95,6 @@ class Session:
     player_name: str
     run_started_at: Optional[float] = None
     touch_count: int = 0
-    shocks_fired: int = 0
-    last_shock_at: Optional[float] = None
 
     @property
     def running(self) -> bool:
@@ -109,15 +107,11 @@ class Session:
 class GameState:
     def __init__(self) -> None:
         self.lock = threading.RLock()
-        self.shock_enabled = False
-        self.shock_duration = settings.shock_default_s
         self.media_file = settings.default_media
         self.session: Optional[Session] = None
 
     def config(self) -> ConfigResponse:
         return ConfigResponse(
-            shock_enabled=self.shock_enabled,
-            shock_duration=self.shock_duration,
             current_media_file=self.media_file,
         )
 
@@ -133,7 +127,7 @@ def session_response() -> SessionResponse:
     return SessionResponse(
         active=True, session_id=s.id, player_name=s.player_name,
         phase="running" if s.running else "waiting",
-        touch_count=s.touch_count, shocks_fired=s.shocks_fired,
+        touch_count=s.touch_count,
         elapsed_seconds=round(elapsed, 2),
         live_score=compute_score(elapsed, s.touch_count) if s.running else int(settings.score_base),
     )
@@ -181,12 +175,12 @@ def ensure_default_chime() -> None:
         w.writeframes(bytes(frames))
 
 
-def apply_zap_frame(img_bytes: bytes, player_name: str, fault_num: int, shocked: bool) -> bytes:
+def apply_touch_frame(img_bytes: bytes, player_name: str, fault_num: int) -> bytes:
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     w, h = img.size
     draw = ImageDraw.Draw(img)
 
-    border_color = (255, 204, 0) if shocked else (56, 189, 248)
+    border_color = (56, 189, 248)
     border_w = max(8, int(min(w, h) * 0.02))
     draw.rectangle([0, 0, w - 1, h - 1], outline=border_color, width=border_w)
 
@@ -200,8 +194,7 @@ def apply_zap_frame(img_bytes: bytes, player_name: str, fault_num: int, shocked:
     except Exception:
         font_lg = font_sm = ImageFont.load_default()
 
-    tag = "ZAPPED!" if shocked else "FAULT!"
-    title_text = f"{tag} - {player_name.upper()}"
+    title_text = f"TOUCH! - {player_name.upper()}"
     sub_text = f"Touch #{fault_num}  |  Buzz Wire Challenge"
 
     draw.text((border_w + 16, h - banner_h + int(banner_h * 0.12)), title_text, fill=border_color, font=font_lg)
@@ -212,9 +205,15 @@ def apply_zap_frame(img_bytes: bytes, player_name: str, fault_num: int, shocked:
     return out.getvalue()
 
 
-def capture_and_upload_zap(session_id: str, player_name: str, fault_num: int, shocked: bool) -> None:
+def capture_and_upload_touch(session_id: str, player_name: str, fault_num: int) -> Optional[dict]:
+    """Grab a frame from the camera, frame it, upload to Garage S3 and announce it.
+
+    Returns the uploaded photo info (key/url) on success, or ``None`` if the camera
+    or S3 is not configured / reachable.
+    """
     if not settings.phone_snapshot_url or not s3_client:
-        return
+        log.warning("capture skipped: camera URL or S3 client not configured")
+        return None
     try:
         time.sleep(0.15)  # Catch the human reaction
         with httpx.Client(timeout=3.5) as client:
@@ -222,9 +221,9 @@ def capture_and_upload_zap(session_id: str, player_name: str, fault_num: int, sh
             resp.raise_for_status()
             raw_jpeg = resp.content
 
-        framed_jpeg = apply_zap_frame(raw_jpeg, player_name, fault_num, shocked)
+        framed_jpeg = apply_touch_frame(raw_jpeg, player_name, fault_num)
         ts = int(time.time())
-        key = f"sessions/{session_id}/zap_{ts}_{fault_num}.jpg"
+        key = f"sessions/{session_id}/touch_{ts}_{fault_num}.jpg"
 
         s3_client.put_object(
             Bucket=settings.s3_bucket,
@@ -235,16 +234,89 @@ def capture_and_upload_zap(session_id: str, player_name: str, fault_num: int, sh
         url = s3_client.generate_presigned_url(
             "get_object", Params={"Bucket": settings.s3_bucket, "Key": key}, ExpiresIn=86400
         )
-        broadcaster.broadcast("photo_uploaded", {
+        info = {
             "session_id": session_id,
             "player_name": player_name,
             "fault": fault_num,
             "url": url,
             "key": key,
-        })
-        log.info("Uploaded zap photo to Garage S3: s3://%s/%s", settings.s3_bucket, key)
+        }
+        broadcaster.broadcast("photo_uploaded", info)
+        log.info("Uploaded touch photo to Garage S3: s3://%s/%s", settings.s3_bucket, key)
+        return info
     except Exception:
-        log.exception("Failed to capture or upload zap photo for session %s", session_id)
+        log.exception("Failed to capture or upload touch photo for session %s", session_id)
+        return None
+
+
+def camera_selftest(use_camera: bool = True) -> dict:
+    """Diagnostic: capture (or synthesize) a frame and upload it to Garage S3 under a
+    dummy session so you can confirm the camera + bucket wiring end-to-end.
+
+    If ``use_camera`` is True it pulls a real frame from ``PHONE_SNAPSHOT_URL``; on any
+    camera failure (or when False) it falls back to a generated placeholder image so the
+    S3 upload path can still be verified independently.
+    """
+    result = {
+        "camera_url": settings.phone_snapshot_url,
+        "s3_endpoint": settings.s3_endpoint,
+        "s3_bucket": settings.s3_bucket,
+        "camera_ok": False,
+        "s3_configured": s3_client is not None,
+        "uploaded": False,
+        "source": None,
+        "key": None,
+        "url": None,
+        "error": None,
+    }
+
+    raw_jpeg = None
+    if use_camera and settings.phone_snapshot_url:
+        try:
+            with httpx.Client(timeout=3.5) as client:
+                resp = client.get(settings.phone_snapshot_url)
+                resp.raise_for_status()
+                raw_jpeg = resp.content
+            result["camera_ok"] = True
+            result["source"] = "camera"
+        except Exception as exc:
+            result["error"] = f"camera fetch failed: {exc!r}"
+
+    if raw_jpeg is None:
+        # Synthesize a dummy frame so the S3 path is still exercised.
+        img = Image.new("RGB", (640, 480), (15, 23, 42))
+        draw = ImageDraw.Draw(img)
+        draw.text((20, 20), "CAMERA SELF-TEST (dummy frame)", fill=(56, 189, 248))
+        draw.text((20, 50), time.strftime("%Y-%m-%d %H:%M:%S"), fill=(226, 232, 240))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        raw_jpeg = buf.getvalue()
+        if result["source"] is None:
+            result["source"] = "dummy"
+
+    if s3_client is None:
+        result["error"] = result["error"] or "S3 client not configured (missing S3_ACCESS_KEY/S3_SECRET_KEY)"
+        return result
+
+    try:
+        framed = apply_touch_frame(raw_jpeg, "SELFTEST", 0)
+        ts = int(time.time())
+        key = f"sessions/selftest/selftest_{ts}.jpg"
+        s3_client.put_object(
+            Bucket=settings.s3_bucket, Key=key, Body=framed, ContentType="image/jpeg"
+        )
+        url = s3_client.generate_presigned_url(
+            "get_object", Params={"Bucket": settings.s3_bucket, "Key": key}, ExpiresIn=86400
+        )
+        result["uploaded"] = True
+        result["key"] = key
+        result["url"] = url
+        log.info("Camera self-test uploaded to s3://%s/%s", settings.s3_bucket, key)
+    except Exception as exc:
+        result["error"] = f"S3 upload failed: {exc!r}"
+        log.exception("Camera self-test S3 upload failed")
+
+    return result
 
 
 # --------------------------------------------------------------------------- #

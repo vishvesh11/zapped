@@ -20,7 +20,8 @@ from config import settings
 from helpers import (
     Session,
     broadcaster,
-    capture_and_upload_zap,
+    camera_selftest,
+    capture_and_upload_touch,
     compute_score,
     get_board,
     list_media,
@@ -138,10 +139,6 @@ async def update_config(update: ConfigUpdate):
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
     with state.lock:
-        if update.shock_enabled is not None:
-            state.shock_enabled = update.shock_enabled
-        if update.shock_duration is not None:
-            state.shock_duration = update.shock_duration
         if update.current_media_file is not None:
             state.media_file = update.current_media_file
         cfg = state.config()
@@ -152,6 +149,14 @@ async def update_config(update: ConfigUpdate):
 @router.get("/media", response_model=MediaListResponse)
 async def get_media():
     return MediaListResponse(files=list_media())
+
+
+@router.post("/camera/test")
+async def camera_test(use_camera: bool = True):
+    """Trigger a camera capture + Garage S3 upload with a dummy session/name so you can
+    verify the pipeline. Pass ``use_camera=false`` to upload a synthetic frame and test
+    S3 alone. Returns a diagnostic report (camera_ok, uploaded, key, url, error)."""
+    return camera_selftest(use_camera=use_camera)
 
 
 @router.get("/session", response_model=SessionResponse)
@@ -189,8 +194,6 @@ async def run_start(body: RunStart):
         if not s.running:
             s.run_started_at = time.monotonic()
             s.touch_count = 0
-            s.shocks_fired = 0
-            s.last_shock_at = None
         resp = session_response()
     broadcaster.broadcast("session_update", resp.model_dump())
     return resp
@@ -203,18 +206,12 @@ async def touch_event(background: BackgroundTasks, payload: Optional[TouchEvent]
         if sess and payload and payload.session_id and payload.session_id != sess.id:
             sess = None
         running = sess is not None and sess.running
-        shock, duration, faults = False, state.shock_duration, 0
+        faults = 0
         sess_id, player_name = None, ""
         if running:
             sess.touch_count += 1
             if payload and payload.fault_count and payload.fault_count > sess.touch_count:
                 sess.touch_count = payload.fault_count
-            now = time.monotonic()
-            cooled = sess.last_shock_at is None or now - sess.last_shock_at >= settings.shock_cooldown_s
-            if state.shock_enabled and cooled and sess.shocks_fired < settings.max_shocks_per_session:
-                shock = True
-                sess.shocks_fired += 1
-                sess.last_shock_at = now
             faults = sess.touch_count
             sess_id = sess.id
             player_name = sess.player_name
@@ -224,18 +221,16 @@ async def touch_event(background: BackgroundTasks, payload: Optional[TouchEvent]
     broadcaster.broadcast("play_chime", {
         "audio_url": f"/public/media/{media}",
         "touch_count": faults,
-        "shock": shock,
         "session_id": sess_id,
     })
     broadcaster.broadcast("session_update", resp_state.model_dump())
 
-    # Snap photo when a player gets shocked (change `if running and shock:` to `if running:` to snap all faults)
-    if running and sess_id and shock:
-        background.add_task(capture_and_upload_zap, sess_id, player_name, faults, shock)
+    # Snap a photo on every wand touch.
+    if running and sess_id:
+        background.add_task(capture_and_upload_touch, sess_id, player_name, faults)
 
     return TouchResponse(
-        chime_queued=True, running=running, touch_count=faults,
-        shock=shock, shock_duration=duration
+        chime_queued=True, running=running, touch_count=faults
     )
 
 

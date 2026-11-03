@@ -37,13 +37,6 @@ def api(method: str, path: str, **kwargs) -> Tuple[Optional[Any], Optional[str]]
         return None, "Backend returned invalid JSON"
 
 
-def kill_shock() -> None:
-    """Callback for the emergency button: disarm and reset the toggle."""
-    _, err = api("POST", "/config", json={"shock_enabled": False})
-    st.session_state["shock_toggle"] = False
-    st.session_state["flash"] = ("error", err) if err else ("success", "Shock disarmed.")
-
-
 # --------------------------------------------------------------------------- #
 st.title("⚡ Buzz Wire Control Panel")
 
@@ -66,7 +59,6 @@ left, right = st.columns([1, 1], gap="large")
 # ---------------------------- Control panel -------------------------------- #
 with left:
     st.subheader("Game controls")
-    st.caption("Shock status on the device: **%s**" % ("ARMED" if cfg["shock_enabled"] else "OFF"))
 
     media, merr = api("GET", "/media")
     files = media["files"] if media else []
@@ -74,18 +66,11 @@ with left:
         st.warning(merr)
 
     with st.form("settings"):
-        shock_on = st.toggle("Shock module ON", value=cfg["shock_enabled"], key="shock_toggle")
-        duration = st.slider("Shock duration (seconds)",
-                             min_value=float(cfg["shock_duration_min"]),
-                             max_value=float(cfg["shock_duration_max"]),
-                             value=float(cfg["shock_duration"]), step=0.05)
         current = cfg["current_media_file"]
         choice = st.selectbox("Chime sound (from backend media folder)", files or [current],
                               index=files.index(current) if current in files else 0)
         if st.form_submit_button("Apply settings", type="primary"):
             _, perr = api("POST", "/config", json={
-                "shock_enabled": shock_on,
-                "shock_duration": duration,
                 "current_media_file": choice,
             })
             if perr:
@@ -94,21 +79,26 @@ with left:
                 st.success("Settings applied.")
                 st.rerun()
 
-    st.button("Emergency: shock OFF", on_click=kill_shock)
+    st.divider()
+    st.subheader("Camera test")
+    st.caption("Grab a frame from the IP camera and upload it to Garage S3 under a dummy session.")
+    t1, t2 = st.columns(2)
+    if t1.button("Test camera + S3"):
+        res, terr = api("POST", "/camera/test", params={"use_camera": "true"})
+        st.error(terr) if terr else st.json(res)
+    if t2.button("Test S3 only (dummy)"):
+        res, terr = api("POST", "/camera/test", params={"use_camera": "false"})
+        st.error(terr) if terr else st.json(res)
 
     st.divider()
     st.subheader("Player")
     st.caption("Click Start, then hang the wand on the START hook. Lift it to begin. "
-               "Hang it on the END hook to finish. Between games the circuit is disarmed, "
-               "so you can carry the wand back to the start safely.")
+               "Hang it on the END hook to finish.")
     name = st.text_input("Player name", max_chars=24)
-    consent = st.checkbox("Player has been warned about the shock and agrees to play")
     c1, c2 = st.columns(2)
     if c1.button("Start game", type="primary"):
         if not name.strip():
             st.error("Enter a player name first.")
-        elif cfg["shock_enabled"] and not consent:
-            st.error("Confirm the player's consent, or turn the shock OFF.")
         else:
             _, serr = api("POST", "/session/start", json={"player_name": name})
             st.error(serr) if serr else st.rerun()
@@ -138,7 +128,6 @@ def live_tracker() -> None:
                    "Timer stays at 0 until the wand leaves the hook.")
     else:
         st.success("Running. Hang the wand on the END hook to finish.")
-    st.caption("Shocks fired this game: %d" % sess["shocks_fired"])
 
 
 with right:

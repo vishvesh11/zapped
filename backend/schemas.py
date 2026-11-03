@@ -7,27 +7,18 @@ from config import settings
 
 
 class ConfigResponse(BaseModel):
-    shock_enabled: bool
-    shock_duration: float
     current_media_file: str
-    shock_duration_min: float = settings.shock_min_s
-    shock_duration_max: float = settings.shock_max_s
     score_base: float = settings.score_base
     score_per_second: float = settings.score_per_second
     score_per_fault: float = settings.score_per_fault
 
 
 class ConfigUpdate(BaseModel):
-    shock_enabled: Optional[bool] = None
-    shock_duration: Optional[float] = Field(
-        None, ge=settings.shock_min_s, le=settings.shock_max_s
-    )
     current_media_file: Optional[str] = Field(None, min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def at_least_one(self):
-        if (self.shock_enabled is None and self.shock_duration is None
-                and self.current_media_file is None):
+        if self.current_media_file is None:
             raise ValueError("provide at least one field to update")
         return self
 
@@ -54,7 +45,6 @@ class SessionResponse(BaseModel):
     player_name: Optional[str] = None
     phase: Optional[str] = None
     touch_count: int = 0
-    shocks_fired: int = 0
     elapsed_seconds: float = 0.0
     live_score: int = 0
 
@@ -75,8 +65,6 @@ class TouchResponse(BaseModel):
     chime_queued: bool
     running: bool
     touch_count: int
-    shock: bool
-    shock_duration: float
 
 
 class CompleteRequest(BaseModel):

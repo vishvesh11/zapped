@@ -34,20 +34,13 @@ class Settings(BaseSettings):
 
     # ---- Headscale camera + Garage S3 ------------------------------------- #
     phone_snapshot_url: str = Field(
-        default="http://100.64.0.15:8080/shot.jpg", alias="PHONE_SNAPSHOT_URL"
+        default="http://100.64.0.8:8080/shot.jpg", alias="PHONE_SNAPSHOT_URL"
     )
     s3_endpoint: str = Field(default="https://s3.vishvesh.me", alias="S3_ENDPOINT")
     s3_region: str = Field(default="garage", alias="S3_REGION")
     s3_bucket: str = Field(default="buzzwire-zaps", alias="S3_BUCKET")
     s3_access_key: str = Field(default="", alias="S3_ACCESS_KEY")
     s3_secret_key: str = Field(default="", alias="S3_SECRET_KEY")
-
-    # ---- Shock safety limits ---------------------------------------------- #
-    shock_min_s: float = 0.05
-    shock_max_s: float = Field(default=0.5, alias="SHOCK_MAX_S")
-    shock_default_s: float = 0.15
-    shock_cooldown_s: float = Field(default=3.0, alias="SHOCK_COOLDOWN_S")
-    max_shocks_per_session: int = Field(default=3, alias="MAX_SHOCKS_PER_SESSION")
 
     # ---- Score formula ---------------------------------------------------- #
     score_base: float = Field(default=1000.0, alias="SCORE_BASE")
