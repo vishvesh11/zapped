@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "main.py"
+      - "/backend/**"
       - "requirements.txt"
       - "dockerfile"
       - "templates/**"
