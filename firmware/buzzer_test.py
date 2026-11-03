@@ -7,8 +7,6 @@ import config
 # Initialize the onboard LED
 led = Pin("LED", Pin.OUT)
 
-relay = Pin(config.SHOCK_PIN, Pin.OUT, value=config.RELAY_OFF)
-
 if config.BUZZER_ACTIVE:
     buzzer = Pin(config.BUZZER_PIN, Pin.OUT, value=0)
 else:
@@ -37,5 +35,4 @@ try:
         time.sleep_ms(200)
     print("Test complete")
 finally:
-    set_buzzer_and_led(False)       # Safety turn off
-    relay.value(config.RELAY_OFF)
+    set_buzzer_and_led(False)       # always leave both off

@@ -3,3 +3,9 @@ venv/*
 .vscode/*
 firmware/.vscode/*
 firmware/.micropico
+*.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+backend/.env

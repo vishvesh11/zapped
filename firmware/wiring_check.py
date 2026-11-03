@@ -1,7 +1,7 @@
 """Wiring check. Run from Thonny BEFORE the game firmware (Run current script).
 
 Watches the track and both hooks for 60 s and prints every change. Beeps when the wand
-touches the track. The relay is held OFF the whole time, so this can never shock anyone.
+touches the track.
 
 Expected, with the wand (GND) in your hand:
   touch track      -> "TRACK: wand touching" + beep      release -> "open"
@@ -12,8 +12,6 @@ import time
 from machine import Pin, PWM
 
 import config
-
-relay = Pin(config.SHOCK_PIN, Pin.OUT, value=config.RELAY_OFF)  # held OFF
 
 if config.BUZZER_ACTIVE:
     buz = Pin(config.BUZZER_PIN, Pin.OUT, value=0)
@@ -59,5 +57,4 @@ try:
         time.sleep_ms(10)
 finally:
     buzz(False)
-    relay.value(config.RELAY_OFF)
     print("done")

@@ -15,7 +15,7 @@ import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import boto3
 from botocore.client import Config as BotoConfig
@@ -58,29 +58,48 @@ def compute_score(seconds: float, faults: int) -> int:
 # SSE Event Broadcaster
 # --------------------------------------------------------------------------- #
 class EventBroadcaster:
+    """Fan-out of SSE payloads to every connected client.
+
+    ``broadcast`` may be called from the event loop *or* from worker threads (e.g.
+    the photo-upload background task). ``asyncio.Queue`` is not thread-safe, so
+    cross-thread puts are marshalled onto the subscriber's loop.
+    """
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._subscribers: List[asyncio.Queue] = []
+        self._subscribers: List[Tuple[asyncio.Queue, asyncio.AbstractEventLoop]] = []
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=50)
+        loop = asyncio.get_running_loop()
         with self._lock:
-            self._subscribers.append(q)
+            self._subscribers.append((q, loop))
         return q
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         with self._lock:
-            if q in self._subscribers:
-                self._subscribers.remove(q)
+            self._subscribers = [(sq, lp) for sq, lp in self._subscribers if sq is not q]
+
+    @staticmethod
+    def _put(q: asyncio.Queue, payload: str) -> None:
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            pass  # slow client: drop rather than block everyone else
 
     def broadcast(self, event_type: str, data: dict) -> None:
         payload = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
         with self._lock:
-            for q in list(self._subscribers):
-                try:
-                    q.put_nowait(payload)
-                except asyncio.QueueFull:
-                    pass
+            subscribers = list(self._subscribers)
+        for q, loop in subscribers:
+            if loop is current:
+                self._put(q, payload)
+            elif not loop.is_closed():
+                loop.call_soon_threadsafe(self._put, q, payload)
 
 
 broadcaster = EventBroadcaster()
@@ -301,7 +320,8 @@ def camera_selftest(use_camera: bool = True) -> dict:
     try:
         framed = apply_touch_frame(raw_jpeg, "SELFTEST", 0)
         ts = int(time.time())
-        key = f"sessions/selftest/selftest_{ts}.jpg"
+        # Kept outside "sessions/" so diagnostics never show up in the public gallery.
+        key = f"selftest/selftest_{ts}.jpg"
         s3_client.put_object(
             Bucket=settings.s3_bucket, Key=key, Body=framed, ContentType="image/jpeg"
         )

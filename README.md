@@ -1,123 +1,95 @@
-# Buzz Wire Shock Game: setup guide (VS Code + Raspberry Pi Pico W)
+# Buzz Wire Game: setup guide (Raspberry Pi Pico W + FastAPI)
 
 ```
-buzzwire/
-├── backend/main.py        FastAPI server: game state, chime, score, leaderboard
-├── frontend/app.py        Streamlit control panel
+zapped/
+├── backend/               FastAPI server: game state, chime, score, leaderboard, touch photos
+│   ├── templates/         index.html (public leaderboard + photo wall), admin.html (control panel)
+│   └── .env.example       copy to backend/.env for local runs
+├── frontend/app.py        optional Streamlit control panel (same features as /admin)
 ├── firmware/              MicroPython for the Pico W
-│   ├── config.py          EDIT THIS: Wi-Fi, backend IP, pins, relay/buzzer type
+│   ├── config.py          EDIT THIS: Wi-Fi, backend URL, API key, pins, buzzer type
 │   ├── boot.py  net.py  main.py
-│   ├── wiring_check.py    test the track/hooks/buzzer (never fires the relay)
-│   └── relay_test.py      test the relay (5 short pulses)
-├── .vscode/               recommended extensions, run tasks, debug config
-└── requirements.txt
+│   ├── wiring_check.py    test the track/hooks/buzzer
+│   └── buzzer_test.py     test the buzzer + onboard LED
+├── tests/                 pytest suite (backend, firmware simulation, browser end-to-end)
+├── helm/buzzwire-app/     k3s deployment (deployed by .github/workflows/deploy.yaml)
+└── dockerfile
 ```
-
-## SAFETY (read first)
-- Never use on anyone with a pacemaker/heart condition, epilepsy, or who is pregnant; not for young children. Get consent from every player.
-- Keep the toy's own cells (do not swap for stronger batteries) and keep the 0.5 s duration cap.
-- Keep the kill switch in the relay's COM wire. Cells out + short the toy's contacts before soldering.
-- Always bring the system up in BENCH MODE first (`BENCH_MODE = True`): the relay is never driven.
 
 ## Game rules
-Click **Start** in the panel -> hang the wand on the START hook (timer 0) -> lift it: timer runs, every
-track touch is a fault -> hang the wand on the END hook: game over, circuit disarmed.
-**Score = 1000 − 5 × seconds − 50 × faults** (minimum 0). Higher is better.
+Click **Start game** in the control panel -> hang the wand on the START hook (timer 0) -> lift it:
+the timer runs and every track touch is a fault (beep on the Pico, chime in the browser, photo from
+the IP camera) -> hang the wand on the END hook: game over, result goes to the leaderboard.
+**Score = 1000 − 5 × seconds − 50 × faults** (minimum 0, configurable). Higher is better.
 
 ---
-## Part A: PC setup (backend + panel)
+## Part A: run the backend locally
 
-Install: **Python 3.10 to 3.12** (python.org; tick "Add to PATH"), **VS Code**.
-1. VS Code -> File -> Open Folder -> the `buzzwire` folder. Accept the extension recommendations
-   (Python, MicroPico).
-2. Terminal -> New Terminal, then create the environment and install:
+Python **3.11** recommended (same as the Docker image).
 
-   Windows (Command Prompt or PowerShell):
-   ```
-   py -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-   (PowerShell blocked? run `Set-ExecutionPolicy -Scope Process RemoteSigned` first.)
+```
+python3 -m venv .venv
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp backend/.env.example backend/.env # set GAME_API_KEY, S3 keys, camera URL
+python backend/main.py
+```
 
-   macOS / Linux:
-   ```
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-3. Ctrl+Shift+P -> **Python: Select Interpreter** -> pick the `.venv` one.
-4. Start the backend: Ctrl+Shift+P -> **Tasks: Run Task** -> **Run backend**
-   (or in a terminal: `GAME_API_KEY=changeme python backend/main.py`;
-   Windows cmd: `set GAME_API_KEY=changeme` then `python backend\main.py`).
-   Check http://localhost:8000/docs opens.
-5. Start the panel: **Tasks: Run Task** -> **Run frontend** -> http://localhost:8501.
-6. Find your PC's IP address (the Pico needs it):
-   Windows `ipconfig` (IPv4 Address) · macOS `ipconfig getifaddr en0` · Linux `hostname -I`.
-7. Windows firewall: allow port 8000 (run once in an Administrator terminal):
-   `netsh advfirewall firewall add rule name="BuzzWire" dir=in action=allow protocol=TCP localport=8000`
-8. Put sound files (.wav/.ogg/.mp3) in `backend/media/`; they appear in the panel dropdown.
-   A default chime is created automatically. No sound? Game still works (see Troubleshooting).
+- Public leaderboard + photo wall: http://localhost:8000/
+- Control panel: http://localhost:8000/admin (click **🔑 API Key** and enter `GAME_API_KEY`;
+  click **Enable laptop audio** so the chime plays on touches)
+- API docs: http://localhost:8000/docs
 
-Change `changeme` to your own secret in THREE places: `.vscode/tasks.json`, `firmware/config.py`
-(`API_KEY`), and wherever you start the backend/panel.
+Optional Streamlit panel: `pip install -r frontend/requirements.txt` then
+`GAME_API_KEY=... BACKEND_URL=http://localhost:8000 streamlit run frontend/app.py`.
 
-## Part B: Pico setup in VS Code (MicroPico)
+Put extra sound files (.wav/.ogg/.mp3) in the media folder; they appear in the chime dropdown.
+A default chime is generated automatically.
 
-1. **Install MicroPython on the Pico W** (once): hold BOOTSEL while plugging in USB, a drive
-   "RPI-RP2" appears. Download the latest *Raspberry Pi Pico W* `.uf2` from
-   https://micropython.org/download/RPI_PICO_W/ and drop it on the drive. It reboots by itself.
-2. VS Code -> **File -> Open Folder -> `buzzwire/firmware`** (open the firmware folder itself, in a
-   second window, so uploads land at the Pico's root). Install the **MicroPico** extension if prompted.
-3. Ctrl+Shift+P -> **MicroPico: Configure project** (adds code completion; optional).
-4. Edit `config.py`:
-   - `WIFI_SSID`, `WIFI_PASSWORD` (**2.4 GHz network only**: the Pico W has no 5 GHz)
-   - `BACKEND_HOST` = your PC's IP from Part A step 6; `API_KEY` = same secret as the backend
-   - `RELAY_ACTIVE_HIGH` (True/False) and `BUZZER_ACTIVE` (True/False) from your Phase 1 tests
-   - leave `BENCH_MODE = True` for now
-5. Plug the Pico in (normal USB, not BOOTSEL). Bottom bar: click **Pico Disconnected** -> it connects.
-6. Ctrl+Shift+P -> **MicroPico: Upload project to Pico**. Then **MicroPico: Reset** (or replug).
-7. Open the MicroPico terminal (REPL). You should see: `BENCH MODE: shock output disabled...`.
+## Part B: Pico setup (MicroPico in VS Code, Thonny, or mpremote)
 
-To run a test script: open `wiring_check.py` -> right-click -> **Run current file on Pico**
-(or the Run button in the bottom bar). Press Ctrl+C in the REPL to stop a running program.
-
-(No VS Code? Thonny works too: File -> Save as -> Raspberry Pi Pico for each file. CLI:
-`pip install mpremote` then `mpremote fs cp config.py net.py boot.py main.py :`.)
+1. Flash MicroPython **1.22 or newer** for the Pico W (needed for HTTPS): hold BOOTSEL while
+   plugging in USB, drop the `.uf2` from https://micropython.org/download/RPI_PICO_W/ on the drive.
+2. Edit `firmware/config.py`:
+   - `WIFI_SSID`, `WIFI_PASSWORD` (**2.4 GHz only**)
+   - `BACKEND_HOST`: either the deployed URL (`"https://diwaligame.vishvesh.me"`) or a local
+     backend (`"http://192.168.x.y:8000"`). https uses TLS on port 443 automatically.
+   - `API_KEY`: must equal the backend's `GAME_API_KEY` (the k8s secret `buzzwire-secrets`,
+     key `game-api-key`, in production)
+   - `BUZZER_ACTIVE` (True/False) for your buzzer type; leave `BENCH_MODE = True` at first
+3. Upload: `pip install mpremote` then from `firmware/`:
+   `mpremote fs cp config.py net.py boot.py main.py :` and reset the board.
 
 ## Part C: test in this order
 1. `wiring_check.py`: one beep at start; touching the track beeps; hanging the wand on each hook
    prints "START HOOK / END HOOK: wand touching". Fix wiring until all three work.
-2. `relay_test.py` with the toy's CELLS OUT: 5 clicks, 3 s apart; multimeter beeps across COM/NO
-   only during a click. Relay stuck ON at rest -> see Troubleshooting.
-3. Cells in: run `relay_test.py` again and test ONE pulse on your own fingertip across the toy's foil.
-4. **Bench game** (still `BENCH_MODE = True`, main.py running): hang wand on START hook ~2 s ->
-   "ARMED"; lift -> "RUN STARTED"; touch the track -> "FAULT #n" + beep (the LED blinks where a
-   shock would fire); hang on END hook -> "FINISHED ... preview score". Touches afterwards do nothing.
+2. **Bench game** (`BENCH_MODE = True`): hang the wand on START ~2 s -> "ARMED"; lift ->
+   "RUN STARTED"; touch the track -> "FAULT #n" + beep; hang on END -> "FINISHED ... preview score".
+3. **Live** (`BENCH_MODE = False`): the onboard LED is ON while the backend is reachable. Start a
+   game from `/admin`, play, and the score appears on the leaderboard.
 
-## Part D: go live
-1. Backend + panel running (Part A). In the panel keep **Shock OFF** for the first test game.
-2. `config.py`: `BENCH_MODE = False` -> Upload project -> Reset. Console: `config loaded: shock=False`.
-   The Pico's onboard LED is ON while the backend is reachable.
-3. Panel: enter a name -> **Start game** -> play a full game with shock OFF. Score appears on the
-   leaderboard.
-4. Fit the kill switch ON, turn **Shock module ON** in the panel, tick the consent box, Apply, play.
-5. Emergency: the panel's **Emergency: shock OFF** button, or flip the kill switch.
+## Tests
 
-Built-in limits (Pico and backend both enforce): max 0.5 s per shock, 3 s cooldown, 3 shocks per
-game, no shock if the backend is unreachable, shock only during a running game.
+```
+pip install -r requirements-dev.txt
+python -m playwright install chromium   # browser end-to-end tests
+pytest -q
+```
+
+The suite covers the API, the SSE stream, the firmware game loop running under CPython against a
+real backend (simulated wand/hooks/track), and both web pages in headless Chromium. CI runs it
+before every image build.
+
+## Deployment
+Pushing to `main` with changes under `backend/`, `requirements.txt` or `dockerfile` runs the tests,
+builds a multi-arch image to GHCR and bumps `helm/buzzwire-app/values.yaml`. Keep **one replica /
+one uvicorn worker**: the live game state is held in memory.
 
 ## Troubleshooting
-- **Pico can't reach the backend:** same Wi-Fi as the PC? 2.4 GHz? Guest networks often block
-  device-to-device traffic. Open `http://<PC-IP>:8000/health` from your phone on the same Wi-Fi.
-  Check firewall (Part A step 7) and `BACKEND_HOST`. API key must match exactly (401 errors).
-- **No chime:** `pip install pygame`; needs an audio output device. The game works without sound.
-  Pygame has no wheels for very new Python versions; use Python 3.10-3.12.
-- **Relay clicks ON at power-up/rest:** low-level-trigger module: add the 1k pull-up (GP14 to 3V3)
-  and set `RELAY_ACTIVE_HIGH = False`; if it still stays on, power the module's logic (VCC) from 3V3 and
-  the coil (JD-VCC, jumper removed) from VBUS.
+- **Pico can't reach the backend:** check the REPL for `http ... failed`. 2.4 GHz Wi-Fi? Correct
+  `BACKEND_HOST`? `401` means `API_KEY` doesn't match. HTTPS needs MicroPython ≥ 1.22.
+- **No chime:** click "Enable laptop audio" in `/admin` (browsers block autoplay).
+- **No photos:** use "Test camera + S3" in `/admin`; it reports camera and upload errors.
 - **Track always "touching":** wand wire touching a hook/track, or the track touching a hook.
 - **Timer never starts:** the wand must be seen on the START hook first, then lifted.
-- **Pico keeps rebooting in live mode:** that is the watchdog catching a hang; check the REPL output.
-  Debug in bench mode (watchdog off).
-- **Backend ports:** change with `PORT=9000`; update `BACKEND_PORT` in `config.py`.
+- **Pico keeps rebooting in live mode:** that is the watchdog catching a hang; debug in bench mode.

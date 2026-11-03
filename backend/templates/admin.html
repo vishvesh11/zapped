@@ -39,36 +39,9 @@
     <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <section class="space-y-6">
         <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 class="text-base font-semibold">Game controls</h2>
-              <p class="mt-1 text-sm text-slate-600">Shock status on the device: <strong id="shock-status">Loading...</strong></p>
-            </div>
-            <button type="button" onclick="emergencyOff()"
-                    class="rounded-lg border border-rose-500/40 bg-rose-600/20 px-4 py-2 text-sm font-semibold text-rose-300 hover:bg-rose-600/30">
-              Emergency: shock OFF
-            </button>
-          </div>
+          <h2 class="mb-4 text-base font-semibold">Game controls</h2>
 
           <form id="settings-form" class="space-y-4">
-            <label class="flex items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <span>
-                <span class="block font-bold">Shock module ON</span>
-                <span class="text-xs text-slate-600">Enable or disable the device shock module</span>
-              </span>
-              <input id="shock-toggle" type="checkbox" class="h-5 w-5 accent-blue-600" />
-            </label>
-
-            <label class="block">
-              <span class="mb-2 flex justify-between text-sm">
-                <span>Shock duration</span>
-                <span><output id="duration-value">-</output> seconds</span>
-              </span>
-              <input id="shock-duration" type="range" min="0.05" max="0.5" step="0.05"
-                     class="w-full accent-blue-600" />
-              <span id="duration-range" class="mt-1 block text-xs text-slate-500"></span>
-            </label>
-
             <label class="block text-sm">
               <span class="mb-2 block">Chime sound</span>
               <select id="media-file" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none"></select>
@@ -78,14 +51,26 @@
               Apply settings
             </button>
           </form>
+
+          <div class="mt-6 border-t border-slate-200 pt-4">
+            <h3 class="text-sm font-semibold">Camera test</h3>
+            <p class="mt-1 text-xs text-slate-600">Grab a frame from the IP camera and upload it to S3 under a test key (not shown in the public gallery).</p>
+            <div class="mt-3 flex flex-wrap gap-3">
+              <button id="cam-test" type="button" onclick="cameraTest(true)"
+                      class="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700 hover:bg-slate-200 disabled:opacity-40">Test camera + S3</button>
+              <button id="s3-test" type="button" onclick="cameraTest(false)"
+                      class="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700 hover:bg-slate-200 disabled:opacity-40">Test S3 only (dummy frame)</button>
+            </div>
+            <pre id="camera-result" class="mt-3 hidden max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100"></pre>
+          </div>
         </div>
 
         <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 class="text-base font-semibold">Player</h2>
           <p class="mb-4 mt-2 text-sm leading-relaxed text-slate-600">
             Click Start, then hang the wand on the START hook. Lift it to begin.
-            Hang it on the END hook to finish. Between games the circuit is disarmed,
-            so you can carry the wand back to the start safely.
+            Hang it on the END hook to finish. Between games touches are ignored,
+            so you can carry the wand back to the start freely.
           </p>
           <form id="player-form" class="space-y-4">
             <label class="block text-sm">
@@ -94,16 +79,12 @@
                      class="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none"
                      placeholder="Enter player name" />
             </label>
-            <label class="flex items-start gap-3 text-sm text-slate-700">
-              <input id="player-consent" type="checkbox" class="mt-0.5 h-4 w-4 accent-blue-600" />
-              <span>Player has been warned about the shock and agrees to play</span>
-            </label>
             <div class="flex flex-wrap gap-3">
               <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 font-bold text-white hover:bg-blue-700">
                 Start game
               </button>
               <button type="button" onclick="abortSession()"
-                      class="rounded-lg border border-rose-500/40 bg-rose-600/20 px-5 py-2.5 font-semibold text-rose-300 hover:bg-rose-600/30">
+                      class="rounded-lg border border-rose-300 bg-rose-50 px-5 py-2.5 font-semibold text-rose-700 hover:bg-rose-100">
                 Abort game
               </button>
             </div>
@@ -121,7 +102,7 @@
             </div>
             <div class="rounded-lg bg-slate-50 p-3">
               <div class="text-xs text-slate-600">Faults</div>
-              <div id="st-touches" class="font-mono text-2xl font-bold text-rose-400">0</div>
+              <div id="st-touches" class="font-mono text-2xl font-bold text-rose-600">0</div>
             </div>
             <div class="rounded-lg bg-slate-50 p-3">
               <div class="text-xs text-slate-600">Timer</div>
@@ -135,7 +116,6 @@
           <div id="session-message" class="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700">
             Checking session...
           </div>
-          <p class="mt-3 text-xs text-slate-600">Shocks fired this game: <strong id="st-shocks">0</strong></p>
         </div>
 
         <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -186,7 +166,7 @@
     let scoreBase = 1000;
     let scorePerSecond = 5;
     let scorePerFault = 50;
-    let shockEnabled = null;
+    let configLoaded = false;
     let session = null;
     let audioUnlocked = false;
     let chimeAudioUrl = new URL('/public/media/chime.wav', backendUrl).href;
@@ -209,8 +189,8 @@
       el.textContent = message;
       el.className = 'rounded-lg border px-4 py-3 text-sm ' +
         (kind === 'success'
-          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-          : 'border-rose-500/40 bg-rose-500/10 text-rose-300');
+          ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+          : 'border-rose-300 bg-rose-50 text-rose-800');
     }
 
     async function api(path, options = {}) {
@@ -296,25 +276,12 @@
     }
 
     function renderConfig(config) {
-      shockEnabled = config.shock_enabled;
+      configLoaded = true;
       scoreBase = config.score_base;
       scorePerSecond = config.score_per_second;
       scorePerFault = config.score_per_fault;
       document.getElementById('score-formula').textContent =
         scoreBase + ' − ' + scorePerSecond + ' × seconds − ' + scorePerFault + ' × faults (minimum 0)';
-      document.getElementById('shock-status').textContent = config.shock_enabled ? 'ARMED' : 'OFF';
-      document.getElementById('shock-status').className =
-        config.shock_enabled ? 'text-rose-300' : 'text-emerald-300';
-      document.getElementById('shock-toggle').checked = config.shock_enabled;
-
-      const duration = document.getElementById('shock-duration');
-      duration.min = config.shock_duration_min;
-      duration.max = config.shock_duration_max;
-      duration.value = config.shock_duration;
-      document.getElementById('duration-range').textContent =
-        'Allowed: ' + config.shock_duration_min + '–' + config.shock_duration_max + ' seconds';
-      updateDurationLabel();
-
       chimeAudioUrl = new URL(
         '/public/media/' + encodeURIComponent(config.current_media_file),
         backendUrl
@@ -322,11 +289,6 @@
       chime.src = chimeAudioUrl;
       const currentChoice = config.current_media_file;
       loadMedia(currentChoice);
-    }
-
-    function updateDurationLabel() {
-      document.getElementById('duration-value').textContent =
-        Number(document.getElementById('shock-duration').value).toFixed(2);
     }
 
     async function loadMedia(currentChoice) {
@@ -359,8 +321,6 @@
         const config = await api('/config', {
           method: 'POST',
           body: JSON.stringify({
-            shock_enabled: document.getElementById('shock-toggle').checked,
-            shock_duration: Number(document.getElementById('shock-duration').value),
             current_media_file: document.getElementById('media-file').value
           })
         });
@@ -371,15 +331,22 @@
       }
     });
 
-    async function emergencyOff() {
+    async function cameraTest(useCamera) {
+      const buttons = [document.getElementById('cam-test'), document.getElementById('s3-test')];
+      const out = document.getElementById('camera-result');
+      buttons.forEach(b => { b.disabled = true; });
+      out.classList.remove('hidden');
+      out.textContent = 'Running...';
       try {
-        renderConfig(await api('/config', {
-          method: 'POST',
-          body: JSON.stringify({ shock_enabled: false })
-        }));
-        showMessage('Shock disarmed.', 'success');
+        const result = await api('/camera/test?use_camera=' + (useCamera ? 'true' : 'false'), { method: 'POST' });
+        out.textContent = JSON.stringify(result, null, 2);
+        showMessage(result.uploaded ? 'Test photo uploaded.' : 'Test failed: ' + (result.error || 'unknown error'),
+                    result.uploaded ? 'success' : 'error');
       } catch (error) {
+        out.textContent = error.message;
         showMessage(error.message);
+      } finally {
+        buttons.forEach(b => { b.disabled = false; });
       }
     }
 
@@ -390,13 +357,8 @@
         showMessage('Enter a player name first.');
         return;
       }
-      if (shockEnabled === null) {
-        showMessage('Game settings are not loaded yet. Please try again.');
-        return;
-      }
-      if (shockEnabled &&
-          !document.getElementById('player-consent').checked) {
-        showMessage("Confirm the player's consent, or turn the shock OFF.");
+      if (!configLoaded) {
+        showMessage('Game settings are not loaded yet. Check the backend URL / API key and try again.');
         return;
       }
       try {
@@ -425,7 +387,6 @@
       const active = Boolean(data && data.active);
       document.getElementById('st-player').textContent = active ? data.player_name : '-';
       document.getElementById('st-touches').textContent = active ? data.touch_count : '0';
-      document.getElementById('st-shocks').textContent = active ? data.shocks_fired : '0';
       document.getElementById('st-timer').textContent =
         active ? Number(data.elapsed_seconds).toFixed(1) + ' s' : '0.0 s';
       document.getElementById('st-score').textContent = active ? data.live_score : '-';
@@ -439,7 +400,7 @@
         message.className = 'mt-4 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-800';
       } else {
         message.textContent = 'Running. Hang the wand on the END hook to finish.';
-        message.className = 'mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200';
+        message.className = 'mt-4 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800';
       }
     }
 
@@ -490,7 +451,6 @@
       }
     }
 
-    document.getElementById('shock-duration').addEventListener('input', updateDurationLabel);
     document.getElementById('reset-confirm').addEventListener('change', event => {
       document.getElementById('reset-button').disabled = !event.target.checked;
     });

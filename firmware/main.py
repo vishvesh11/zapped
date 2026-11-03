@@ -2,12 +2,13 @@
 
 The wand is wired to GND. Game flow:
 
-  IDLE     No game armed. Track touches are ignored and the shock output is locked off,
-           so the wand can be carried back to the start freely.
+  IDLE     No game armed. Track touches are ignored, so the wand can be carried back
+           to the start freely.
   READY    "Start" was clicked. Wand hangs on the START hook, timer is at 0.
-  RUNNING  Wand lifted off the START hook: timer runs, every track touch is a fault.
+  RUNNING  Wand lifted off the START hook: timer runs, every track touch is a fault
+           (local beep + reported to the backend, which plays the chime and snaps a photo).
   Hanging the wand on the END hook finishes the game, reports the result and
-  returns to IDLE (disarmed) until the next "Start" click.
+  returns to IDLE until the next "Start" click.
 """
 import time
 
@@ -21,7 +22,6 @@ IDLE, READY, RUNNING = 0, 1, 2
 PHASE_NAMES = ("IDLE", "READY", "RUNNING")
 
 led = Pin("LED", Pin.OUT)
-shock_pin = Pin(config.SHOCK_PIN, Pin.OUT, value=config.RELAY_OFF)
 
 if config.BUZZER_ACTIVE:
     _buzzer = Pin(config.BUZZER_PIN, Pin.OUT, value=0)
@@ -67,15 +67,11 @@ class State:
     def __init__(self):
         self.phase = IDLE
         self.session_id = None
-        self.shock_enabled = False          # fail-safe default
-        self.shock_duration = config.DEFAULT_SHOCK_S
         self.backend_failures = 0
         self.hook_seen = False              # wand has rested on the START hook this game
         self.hint_shown = False
         self.run_start_ms = 0
         self.faults = 0
-        self.shocks_fired = 0
-        self.last_shock_ms = None
         self.touch_busy = False
         self.pending = None                 # finished result waiting to be reported
         self.sending = False
@@ -83,14 +79,6 @@ class State:
 
 
 state = State()
-
-
-def set_output(value):
-    """Close/open the relay that replaces the toy's switch contact. In bench mode only the LED is used."""
-    if config.BENCH_MODE:
-        led.value(value)
-    else:
-        shock_pin.value(config.RELAY_ON if value else config.RELAY_OFF)
 
 
 def buzzer_set(on, freq=2000):
@@ -120,17 +108,9 @@ async def beep(times=1, ms=120, freq=2000):
         state.beeping = False
 
 
-def clamp_duration(value):
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        value = config.DEFAULT_SHOCK_S
-    return max(config.MIN_SHOCK_S, min(value, config.HARD_MAX_SHOCK_S))
-
-
 def preview_score(seconds, faults):
-    return max(0, int(config.SCORE_BASE - config.SCORE_PER_SECOND * seconds
-                      - config.SCORE_PER_FAULT * faults))
+    return max(0, int(round(config.SCORE_BASE - config.SCORE_PER_SECOND * seconds
+                            - config.SCORE_PER_FAULT * faults)))
 
 
 # --------------------------------------------------------------------------- #
@@ -142,7 +122,9 @@ bench = {"active": False, "id": None, "n": 0, "since": None}
 def bench_call(path, body):
     now = time.ticks_ms()
     if path.endswith("/config"):
-        return 200, {"shock_enabled": True, "shock_duration": config.DEFAULT_SHOCK_S}
+        return 200, {"score_base": config.SCORE_BASE,
+                     "score_per_second": config.SCORE_PER_SECOND,
+                     "score_per_fault": config.SCORE_PER_FAULT}
     if path.endswith("/session"):
         if not bench["active"]:
             if start_hook.engaged:
@@ -157,7 +139,8 @@ def bench_call(path, body):
                 bench["since"] = None
         return 200, {"active": bench["active"], "session_id": bench["id"]}
     if path.endswith("/event/touch"):
-        return 200, {"shock": True, "shock_duration": state.shock_duration}
+        return 200, {"chime_queued": True, "running": True,
+                     "touch_count": (body or {}).get("fault_count", 0)}
     if path.endswith("/run-start"):
         return 200, {"ok": True}
     if path.endswith("/game/complete"):
@@ -177,17 +160,20 @@ def note_backend(ok):
     state.backend_failures = 0 if ok else state.backend_failures + 1
     if not config.BENCH_MODE:
         led.value(1 if ok else 0)  # LED on = backend reachable
-        if state.backend_failures >= 3 and state.shock_enabled:
-            state.shock_enabled = False
-            log("backend lost: shock disarmed locally")
 
 
 async def fetch_config():
+    """Sync the score formula (used for the console preview) with the backend."""
     status, data = await call("GET", "/api/v1/config")
     ok = status == 200 and isinstance(data, dict)
     if ok:
-        state.shock_enabled = bool(data.get("shock_enabled"))
-        state.shock_duration = clamp_duration(data.get("shock_duration"))
+        for key, attr in (("score_base", "SCORE_BASE"),
+                          ("score_per_second", "SCORE_PER_SECOND"),
+                          ("score_per_fault", "SCORE_PER_FAULT")):
+            if isinstance(data.get(key), (int, float)):
+                setattr(config, attr, data[key])
+    elif status == 401:
+        log("backend rejected API_KEY (401): check config.API_KEY")
     note_backend(ok)
     return ok
 
@@ -195,40 +181,11 @@ async def fetch_config():
 async def init_config():
     for _ in range(5):
         if await fetch_config():
-            log("config loaded: shock=%s duration=%.2fs" % (state.shock_enabled, state.shock_duration))
+            log("backend reachable at %s:%d (tls=%s)" % (net.HOST, net.PORT, net.USE_TLS)
+                if not config.BENCH_MODE else "bench backend ready")
             return
         await asyncio.sleep(2)
-    log("backend unreachable at start; running with shock disabled")
-
-
-# --------------------------------------------------------------------------- #
-# Shock output (all local safety limits live here)
-# --------------------------------------------------------------------------- #
-async def fire_shock(duration):
-    if state.phase != RUNNING:
-        return False
-    if state.shocks_fired >= config.MAX_SHOCKS_PER_SESSION:
-        log("shock skipped: per-game cap reached")
-        return False
-    now = time.ticks_ms()
-    if (state.last_shock_ms is not None
-            and time.ticks_diff(now, state.last_shock_ms) < config.SHOCK_COOLDOWN_MS):
-        log("shock skipped: cooldown")
-        return False
-
-    state.last_shock_ms = now
-    state.shocks_fired += 1
-    total_ms = int(clamp_duration(duration) * 1000)
-    log("SHOCK %d ms%s" % (total_ms, " (bench: LED only)" if config.BENCH_MODE else ""))
-    waited = 0
-    try:
-        set_output(1)
-        while waited < total_ms and state.phase == RUNNING:  # stops early if the game ends
-            await asyncio.sleep_ms(10)
-            waited += 10
-    finally:
-        set_output(0)  # always released, even on error/cancel
-    return True
+    log("backend unreachable at start; will keep retrying")
 
 
 # --------------------------------------------------------------------------- #
@@ -244,24 +201,18 @@ def apply_session(data):
             state.hook_seen = start_hook.engaged
             state.hint_shown = False
             state.faults = 0
-            state.shocks_fired = 0
-            state.last_shock_ms = None
-            set_output(0)
             log("ARMED (session %s). Hang the wand on the START hook, then lift it to begin." % sid)
     else:
         if state.phase != IDLE:
             log("game aborted by control panel -> IDLE")
         state.phase = IDLE
         state.session_id = None
-        set_output(0)
 
 
 def begin_run():
     state.phase = RUNNING
     state.run_start_ms = time.ticks_ms()
     state.faults = 0
-    state.shocks_fired = 0
-    state.last_shock_ms = None
     log("RUN STARTED - timer running")
     asyncio.create_task(beep(1, 80, 1500))
     asyncio.create_task(report_run_start())
@@ -270,11 +221,15 @@ def begin_run():
 async def report_run_start():
     sid = state.session_id
     for _ in range(3):
+        if state.session_id != sid:
+            return  # game was aborted/replaced meanwhile
         status, _data = await call("POST", "/api/v1/game/run-start", {
             "session_id": sid, "device_id": config.DEVICE_ID})
         if status == 200:
             note_backend(True)
             return
+        if status == 409:
+            return  # session no longer exists on the backend
         note_backend(False)
         await asyncio.sleep(1)
     log("could not tell backend the run started (timer still runs locally)")
@@ -287,7 +242,7 @@ async def handle_fault():
     log("FAULT #%d" % state.faults)
     asyncio.create_task(beep(1, 150, 2000))
     if state.touch_busy:
-        return
+        return  # the running report (or the final result) carries the newer count
     state.touch_busy = True
     try:
         status, data = await call("POST", "/api/v1/event/touch", {
@@ -296,14 +251,7 @@ async def handle_fault():
             "fault_count": state.faults,
             "uptime_ms": time.ticks_ms(),
         })
-        if status == 200 and isinstance(data, dict):
-            note_backend(True)
-            if data.get("shock"):
-                await fire_shock(data.get("shock_duration", state.shock_duration))
-        else:
-            note_backend(False)
-            if config.ALLOW_CACHED_FALLBACK and state.shock_enabled:
-                await fire_shock(state.shock_duration)
+        note_backend(status == 200 and isinstance(data, dict))
     except Exception as exc:
         print("handle_fault:", repr(exc))
     finally:
@@ -312,14 +260,13 @@ async def handle_fault():
 
 def finish_run():
     elapsed = time.ticks_diff(time.ticks_ms(), state.run_start_ms) / 1000
-    state.phase = IDLE      # disarm immediately: no more faults or shocks
-    set_output(0)
+    state.phase = IDLE      # stop counting faults immediately
     state.pending = {
         "session_id": state.session_id,
         "touch_count": state.faults,
         "completion_time_seconds": max(elapsed, 0.01),
     }
-    log("FINISHED in %.2fs with %d faults (preview score %d). Disarmed - carry the wand back."
+    log("FINISHED in %.2fs with %d faults (preview score %d). Carry the wand back."
         % (elapsed, state.faults, preview_score(elapsed, state.faults)))
     asyncio.create_task(beep(2, 120, 1800))
     asyncio.create_task(send_pending())
@@ -333,7 +280,8 @@ async def send_pending():
         status, data = await call("POST", "/api/v1/game/complete", state.pending)
         if status == 200:
             note_backend(True)
-            log("result reported")
+            rank = data.get("rank") if isinstance(data, dict) else None
+            log("result reported%s" % (" (rank #%s)" % rank if rank else ""))
             state.pending = None
         elif status in (409, 422):  # session gone / rejected: retrying will not help
             log("result rejected by backend (%s)" % status)
@@ -411,21 +359,20 @@ async def watchdog_task(wdt):
 
 
 async def main():
-    set_output(0)
-    shock_pin.value(config.RELAY_OFF)
+    buzzer_set(False)
     if config.BENCH_MODE:
-        log("BENCH MODE: shock output disabled. Hang the wand on the START hook for 2 s to arm a game.")
+        log("BENCH MODE: no backend. Hang the wand on the START hook for 2 s to arm a game.")
     else:
         await net.ensure_wifi()
-    await init_config()
-    tasks = [config_task(), session_task(), game_task()]
     if config.USE_WATCHDOG:
-        tasks.append(watchdog_task(WDT(timeout=8000)))  # reboots the board if the loop hangs
-    await asyncio.gather(*tasks)
+        # Start feeding before anything that can block for long (init_config retries ~60 s).
+        asyncio.create_task(watchdog_task(WDT(timeout=8000)))  # reboots the board if the loop hangs
+    await init_config()
+    await asyncio.gather(session_task(), game_task(), config_task())
 
 
 try:
     asyncio.run(main())
 finally:
-    shock_pin.value(config.RELAY_OFF)
+    buzzer_set(False)
     asyncio.new_event_loop()

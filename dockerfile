@@ -1,9 +1,7 @@
 FROM python:3.11-slim
 
-# System dependencies for Pillow, Pygame, and fonts
+# Fonts for the photo banner (Pillow) and curl for health checks
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsdl2-mixer-2.0-0 \
-    libsdl2-2.0-0 \
     fonts-dejavu-core \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -23,7 +21,6 @@ COPY backend/templates/ ./templates/
 ENV PORT=8000 \
     DB_PATH=/app/data/leaderboard.db \
     MEDIA_DIR=/app/media \
-    SDL_AUDIODRIVER=dummy \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8000

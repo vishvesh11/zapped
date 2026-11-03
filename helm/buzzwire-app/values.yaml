@@ -40,6 +40,7 @@ ingress:
 
 serviceAccount:
   create: true
+  automount: false
   annotations: {}
   name: ""
 
@@ -54,7 +55,12 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
 
-resources: {}
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
 nodeSelector: {}
 tolerations: []
 affinity: {}

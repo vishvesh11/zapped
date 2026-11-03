@@ -11,5 +11,5 @@ spec:
     - name: wget
       image: busybox
       command: ['wget']
-      args: ['{{ include "buzzwire-app.fullname" . }}:{{ .Values.service.port }}']
+      args: ['-qO-', 'http://{{ .Release.Name }}-svc:{{ .Values.service.port }}/health']
   restartPolicy: Never

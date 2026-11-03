@@ -12,7 +12,7 @@ import uuid
 from typing import AsyncGenerator, List, Optional
 
 from fastapi import (
-    APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request,
+    APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request,
 )
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -68,14 +68,25 @@ async def public_session():
 
 
 @public_router.get("/photos", response_model=List[PhotoItem])
-async def list_photos(session_id: Optional[str] = None, limit: int = 24):
-    """Fetches zap photos from Garage S3 (either for a specific player session or latest overall)."""
+def list_photos(session_id: Optional[str] = Query(None, pattern=r"^[A-Za-z0-9_-]{1,64}$"),
+                limit: int = 24):
+    """Fetches touch photos from Garage S3 (either for a specific player session or latest overall).
+
+    Plain ``def`` on purpose: boto3 is blocking, so FastAPI runs this in its threadpool
+    instead of stalling the event loop (SSE stream, Pico polling).
+    """
     if not s3_client:
         return []
+    limit = max(1, min(limit, 100))
     prefix = f"sessions/{session_id}/" if session_id else "sessions/"
     try:
-        res = s3_client.list_objects_v2(Bucket=settings.s3_bucket, Prefix=prefix)
-        objects = sorted(res.get("Contents", []), key=lambda x: x["LastModified"], reverse=True)[:limit]
+        # S3 lists keys lexically, 1000 per page; collect every page so the newest
+        # photos are not lost once the bucket grows past one page.
+        contents = []
+        paginator = s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix):
+            contents.extend(page.get("Contents", []))
+        objects = sorted(contents, key=lambda x: x["LastModified"], reverse=True)[:limit]
         items = []
         for obj in objects:
             key = obj["Key"]
@@ -121,7 +132,12 @@ async def events_stream(request: Request) -> StreamingResponse:
         finally:
             broadcaster.unsubscribe(q)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        # Stop reverse proxies (Traefik / Cloudflare / nginx) from caching or buffering the stream.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---- Admin & Pico Protected Routes ---------------------------------------- #
@@ -152,7 +168,7 @@ async def get_media():
 
 
 @router.post("/camera/test")
-async def camera_test(use_camera: bool = True):
+def camera_test(use_camera: bool = True):  # sync: blocking camera + S3 I/O runs in the threadpool
     """Trigger a camera capture + Garage S3 upload with a dummy session/name so you can
     verify the pipeline. Pass ``use_camera=false`` to upload a synthetic frame and test
     S3 alone. Returns a diagnostic report (camera_ok, uploaded, key, url, error)."""

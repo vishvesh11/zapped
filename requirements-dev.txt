@@ -1,0 +1,4 @@
+-r requirements.txt
+-r frontend/requirements.txt
+pytest>=8
+playwright>=1.45

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Buzz Wire Challenge — Leaderboard & Zap Gallery</title>
+  <title>Buzz Wire Challenge — Leaderboard & Photo Gallery</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
@@ -15,7 +15,7 @@
         <span class="text-3xl">⚡</span>
         <div>
           <h1 class="text-xl font-bold tracking-tight text-amber-400">BUZZ WIRE CHALLENGE</h1>
-          <p class="text-xs text-slate-400">Live Standings & Zapped Action Gallery</p>
+          <p class="text-xs text-slate-400">Live Standings & Touch Photo Gallery</p>
         </div>
       </div>
 
@@ -41,7 +41,7 @@
     <section class="lg:col-span-7">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold text-white">🏆 Top Standings</h2>
-        <span class="text-xs text-slate-400">Click a player to view their Zap Photos</span>
+        <span class="text-xs text-slate-400">Click a player to view their touch photos</span>
       </div>
 
       <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
@@ -63,17 +63,17 @@
       </div>
     </section>
 
-    <!-- Right Column: Live Zap Wall (5 cols) -->
+    <!-- Right Column: Live Photo Wall (5 cols) -->
     <section class="lg:col-span-5">
       <div class="flex items-center justify-between mb-4">
-        <h2 id="gallery-title" class="text-lg font-semibold text-amber-400">📸 Latest Zapped Moments</h2>
-        <button id="reset-gallery-btn" onclick="loadPhotos()" class="hidden text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1 rounded">
+        <h2 id="gallery-title" class="text-lg font-semibold text-amber-400">📸 Latest Touch Moments</h2>
+        <button id="reset-gallery-btn" onclick="loadPhotos()" type="button" class="hidden text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1 rounded">
           Show All Photos
         </button>
       </div>
 
       <div id="photo-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <p class="text-slate-500 text-sm col-span-2 py-8 text-center">No zaps captured yet!</p>
+        <p class="text-slate-500 text-sm col-span-2 py-8 text-center">No touches captured yet!</p>
       </div>
     </section>
 
@@ -82,7 +82,7 @@
   <!-- Lightbox Modal for Fullscreen Image & Download -->
   <div id="lightbox" class="fixed inset-0 bg-black/90 hidden items-center justify-center z-50 p-4" onclick="closeLightbox()">
     <div class="max-w-3xl w-full bg-slate-900 border border-amber-500/40 rounded-xl p-4" onclick="event.stopPropagation()">
-      <img id="lightbox-img" src="" class="w-full rounded-lg mb-4" alt="Zap Shot" />
+      <img id="lightbox-img" src="" class="w-full rounded-lg mb-4" alt="Touch photo" />
       <div class="flex justify-between items-center">
         <a id="lightbox-dl" href="" download class="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-4 py-2 rounded-lg text-sm">
           ⬇ Download Photo
@@ -93,61 +93,108 @@
   </div>
 
   <script>
-    async function loadLeaderboard() {
-      const res = await fetch('/public/leaderboard');
-      const data = await res.json();
-      const tbody = document.getElementById('leaderboard-body');
-      if (!data.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="py-8 text-center text-slate-500">No runs completed yet. Be the first!</td></tr>';
-        return;
-      }
-      tbody.innerHTML = data.map(row => `
-        <tr class="hover:bg-slate-800/60 transition cursor-pointer" onclick="filterBySession('${row.session_id || ''}', '${row.player_name.replace(/'/g, "\\'")}')">
-          <td class="py-3.5 px-4 font-bold ${row.rank <= 3 ? 'text-amber-400' : 'text-slate-400'}">#${row.rank}</td>
-          <td class="py-3.5 px-4 font-medium text-white">${row.player_name}</td>
-          <td class="py-3.5 px-4 text-center">
-            <span class="px-2 py-0.5 rounded text-xs font-semibold ${row.touch_count === 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}">
-              ${row.touch_count}
-            </span>
-          </td>
-          <td class="py-3.5 px-4 text-right font-mono text-slate-300">${row.completion_time_seconds.toFixed(2)}s</td>
-          <td class="py-3.5 px-4 text-right font-bold text-amber-300 font-mono">${row.score}</td>
-          <td class="py-3.5 px-4 text-center">
-            <span class="text-xs text-amber-400 hover:underline">View 📸</span>
-          </td>
-        </tr>
-      `).join('');
+    // All dynamic text is set via textContent / DOM APIs (never innerHTML) so player
+    // names and URLs cannot inject markup or script.
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      return node;
     }
 
-    async function loadPhotos(sessionId = null, playerName = null) {
-      const url = sessionId ? `/public/photos?session_id=${sessionId}` : '/public/photos';
+    function messageRow(colspan, text) {
+      const tr = el('tr');
+      const td = el('td', 'py-8 text-center text-slate-500', text);
+      td.colSpan = colspan;
+      tr.appendChild(td);
+      return tr;
+    }
+
+    async function getJson(url) {
       const res = await fetch(url);
-      const photos = await res.json();
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }
+
+    async function loadLeaderboard() {
+      const tbody = document.getElementById('leaderboard-body');
+      let data;
+      try {
+        data = await getJson('/public/leaderboard');
+      } catch (err) {
+        tbody.replaceChildren(messageRow(6, 'Leaderboard unavailable (' + err.message + '). Retrying...'));
+        return;
+      }
+      if (!data.length) {
+        tbody.replaceChildren(messageRow(6, 'No runs completed yet. Be the first!'));
+        return;
+      }
+      tbody.replaceChildren(...data.map(row => {
+        const tr = el('tr', 'hover:bg-slate-800/60 transition cursor-pointer');
+        tr.addEventListener('click', () => filterBySession(row.session_id, row.player_name));
+        tr.appendChild(el('td', 'py-3.5 px-4 font-bold ' + (row.rank <= 3 ? 'text-amber-400' : 'text-slate-400'), '#' + row.rank));
+        tr.appendChild(el('td', 'py-3.5 px-4 font-medium text-white', row.player_name));
+        const touches = el('td', 'py-3.5 px-4 text-center');
+        touches.appendChild(el('span', 'px-2 py-0.5 rounded text-xs font-semibold ' +
+          (row.touch_count === 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'), row.touch_count));
+        tr.appendChild(touches);
+        tr.appendChild(el('td', 'py-3.5 px-4 text-right font-mono text-slate-300', Number(row.completion_time_seconds).toFixed(2) + 's'));
+        tr.appendChild(el('td', 'py-3.5 px-4 text-right font-bold text-amber-300 font-mono', row.score));
+        const photos = el('td', 'py-3.5 px-4 text-center');
+        photos.appendChild(el('span', 'text-xs text-amber-400 hover:underline', row.session_id ? 'View 📸' : '-'));
+        tr.appendChild(photos);
+        return tr;
+      }));
+    }
+
+    let gallerySession = null;
+    let galleryPlayer = null;
+
+    async function loadPhotos(sessionId = null, playerName = null) {
+      gallerySession = sessionId;
+      galleryPlayer = playerName;
       const grid = document.getElementById('photo-grid');
       const title = document.getElementById('gallery-title');
       const resetBtn = document.getElementById('reset-gallery-btn');
 
       if (sessionId) {
-        title.innerText = `📸 ${playerName}'s Zap Photos`;
+        title.textContent = '📸 ' + playerName + "'s Touch Photos";
         resetBtn.classList.remove('hidden');
       } else {
-        title.innerText = '📸 Latest Zapped Moments';
+        title.textContent = '📸 Latest Touch Moments';
         resetBtn.classList.add('hidden');
       }
 
+      let photos;
+      try {
+        const url = sessionId
+          ? '/public/photos?session_id=' + encodeURIComponent(sessionId)
+          : '/public/photos';
+        photos = await getJson(url);
+      } catch (err) {
+        grid.replaceChildren(el('p', 'text-slate-500 text-sm col-span-2 py-8 text-center', 'Photos unavailable (' + err.message + ').'));
+        return;
+      }
+      if (sessionId !== gallerySession) return; // a newer request superseded this one
+
       if (!photos.length) {
-        grid.innerHTML = `<p class="text-slate-500 text-sm col-span-2 py-8 text-center">No zap photos found ${playerName ? 'for ' + playerName : 'yet'} — steady hands!</p>`;
+        grid.replaceChildren(el('p', 'text-slate-500 text-sm col-span-2 py-8 text-center',
+          'No touch photos found ' + (playerName ? 'for ' + playerName : 'yet') + ' — steady hands!'));
         return;
       }
 
-      grid.innerHTML = photos.map(p => `
-        <div class="bg-slate-900 border border-slate-800 hover:border-amber-400/60 rounded-xl overflow-hidden shadow transition cursor-pointer group"
-             onclick="openLightbox('${p.url}')">
-          <div class="aspect-video bg-slate-950 overflow-hidden">
-            <img src="${p.url}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
-          </div>
-        </div>
-      `).join('');
+      grid.replaceChildren(...photos.map(p => {
+        const card = el('div', 'bg-slate-900 border border-slate-800 hover:border-amber-400/60 rounded-xl overflow-hidden shadow transition cursor-pointer group');
+        card.addEventListener('click', () => openLightbox(p.url));
+        const frame = el('div', 'aspect-video bg-slate-950 overflow-hidden');
+        const img = el('img', 'w-full h-full object-cover group-hover:scale-105 transition duration-300');
+        img.src = p.url;
+        img.loading = 'lazy';
+        img.alt = 'Touch photo';
+        frame.appendChild(img);
+        card.appendChild(frame);
+        return card;
+      }));
     }
 
     function filterBySession(sessionId, playerName) {
@@ -169,6 +216,8 @@
       lb.classList.remove('flex');
     }
 
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
     function updateBanner(s) {
       const banner = document.getElementById('live-banner');
       if (!s || !s.active) {
@@ -178,20 +227,25 @@
       }
       banner.classList.remove('hidden');
       banner.classList.add('flex');
-      document.getElementById('live-player').innerText = s.player_name;
-      document.getElementById('live-phase').innerText = s.phase;
-      document.getElementById('live-touches').innerText = s.touch_count;
+      document.getElementById('live-player').textContent = s.player_name;
+      document.getElementById('live-phase').textContent = s.phase;
+      document.getElementById('live-touches').textContent = s.touch_count;
     }
 
-    // Connect SSE for live updates without refreshing
+    function refreshSession() {
+      getJson('/public/session').then(updateBanner).catch(() => {});
+    }
+
+    // Connect SSE for live updates without refreshing (EventSource reconnects by itself).
     const evt = new EventSource('/public/events/stream');
     evt.addEventListener('session_update', e => updateBanner(JSON.parse(e.data)));
-    evt.addEventListener('game_complete', () => { loadLeaderboard(); loadPhotos(); });
-    evt.addEventListener('photo_uploaded', () => loadPhotos());
+    evt.addEventListener('game_complete', () => { loadLeaderboard(); loadPhotos(gallerySession, galleryPlayer); });
+    evt.addEventListener('photo_uploaded', () => loadPhotos(gallerySession, galleryPlayer));
     evt.addEventListener('leaderboard_cleared', () => loadLeaderboard());
+    evt.addEventListener('connected', () => { refreshSession(); loadLeaderboard(); }); // resync after reconnects
 
     // Initial load
-    fetch('/public/session').then(r => r.json()).then(updateBanner);
+    refreshSession();
     loadLeaderboard();
     loadPhotos();
   </script>

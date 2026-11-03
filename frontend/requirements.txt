@@ -1,0 +1,4 @@
+# Optional Streamlit control panel (the backend also serves one at /admin)
+streamlit>=1.37
+pandas
+requests
