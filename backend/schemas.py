@@ -8,6 +8,8 @@ from config import settings
 
 class ConfigResponse(BaseModel):
     current_media_file: str
+    penalty_media_file: Optional[str] = None
+    penalty_threshold: int = settings.penalty_threshold
     score_base: float = settings.score_base
     score_per_second: float = settings.score_per_second
     score_per_fault: float = settings.score_per_fault
@@ -15,16 +17,27 @@ class ConfigResponse(BaseModel):
 
 class ConfigUpdate(BaseModel):
     current_media_file: Optional[str] = Field(None, min_length=1, max_length=128)
+    # "" turns the penalty sound off (every touch plays the normal chime).
+    penalty_media_file: Optional[str] = Field(None, max_length=128)
+    penalty_threshold: Optional[int] = Field(None, ge=0, le=100)
 
     @model_validator(mode="after")
     def at_least_one(self):
-        if self.current_media_file is None:
+        if (self.current_media_file is None and self.penalty_media_file is None
+                and self.penalty_threshold is None):
             raise ValueError("provide at least one field to update")
         return self
 
 
 class MediaListResponse(BaseModel):
     files: List[str]
+
+
+class MediaUploadResponse(BaseModel):
+    filename: str
+    size: int
+    files: List[str]
+    config: ConfigResponse
 
 
 class SessionStart(BaseModel):

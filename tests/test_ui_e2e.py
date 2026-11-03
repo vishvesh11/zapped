@@ -112,6 +112,70 @@ def test_admin_settings_abort_and_reset(page_factory, backend):
     sync_api.expect(page.locator("#leaderboard-body")).to_contain_text("No completed games yet.")
 
 
+def _wav_bytes():
+    import io
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(8000)
+        w.writeframes(b"\0\0" * 800)
+    return buf.getvalue()
+
+
+def test_admin_upload_penalty_sound_and_trigger(page_factory, backend):
+    """Upload from the admin page, check the browser can decode it, then verify that
+    touches 1-3 play the chime and touches 4+ switch the page's audio to the upload."""
+    page = page_factory("/admin")
+    sync_api.expect(page.locator("#backend-status")).to_have_text("Backend: connected")
+    sync_api.expect(page.locator("#penalty-file")).to_have_value("")
+    sync_api.expect(page.locator("#penalty-summary")).to_contain_text("every touch plays the chime")
+
+    page.set_input_files("#upload-file", files=[{
+        "name": "oops.wav", "mimeType": "audio/wav", "buffer": _wav_bytes()}])
+    page.select_option("#upload-use-as", "penalty")
+    page.click("#upload-btn")
+    sync_api.expect(page.locator("#flash")).to_have_text("Uploaded oops.wav and set it as the penalty sound.")
+    sync_api.expect(page.locator("#penalty-file")).to_have_value("oops.wav")
+    sync_api.expect(page.locator("#penalty-summary")).to_contain_text("from touch 4 on")
+    assert backend.http.get("/api/v1/config").json()["penalty_media_file"] == "oops.wav"
+
+    # The browser can actually load and decode the uploaded file.
+    decoded = page.evaluate("""() => new Promise(resolve => {
+        const a = new Audio('/public/media/oops.wav');
+        a.oncanplaythrough = () => resolve(a.duration);
+        a.onerror = () => resolve(-1);
+    })""")
+    assert decoded > 0
+
+    # Live trigger: watch which file the page's chime element is switched to per touch.
+    sid = backend.http.post("/api/v1/session/start", json={"player_name": "Dee"}).json()["session_id"]
+    backend.http.post("/api/v1/game/run-start", json={"session_id": sid}).raise_for_status()
+    for i in range(1, 6):
+        backend.http.post("/api/v1/event/touch", json={"session_id": sid, "fault_count": i}).raise_for_status()
+        sync_api.expect(page.locator("#st-touches")).to_have_text(str(i))
+        src = page.evaluate("document.getElementById('chime').src")
+        assert src.endswith("/oops.wav" if i > 3 else "/chime.wav"), (i, src)
+
+    # Threshold can be changed from the form.
+    page.fill("#penalty-threshold", "1")
+    page.click("text=Apply settings")
+    sync_api.expect(page.locator("#flash")).to_have_text("Settings applied.")
+    sync_api.expect(page.locator("#penalty-summary")).to_contain_text("from touch 2 on")
+    assert backend.http.get("/api/v1/config").json()["penalty_threshold"] == 1
+
+
+def test_admin_upload_rejects_non_audio(page_factory):
+    page = page_factory("/admin")
+    sync_api.expect(page.locator("#backend-status")).to_have_text("Backend: connected")
+    page.set_input_files("#upload-file", files=[{
+        "name": "notes.wav", "mimeType": "audio/wav", "buffer": b"definitely not audio"}])
+    page.click("#upload-btn")
+    sync_api.expect(page.locator("#flash")).to_contain_text("Upload failed: 422")
+    page.errors.clear()  # the failed fetch is expected
+
+
 def test_admin_camera_test_reports_missing_s3(page_factory):
     page = page_factory("/admin")
     page.click("text=Test S3 only (dummy frame)")

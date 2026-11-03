@@ -38,12 +38,21 @@ BUZZER_ACTIVE = True
 
 # ---- Timing ----------------------------------------------------------------- #
 POLL_MS = 5               # input scan interval
-DEBOUNCE_MS = 30          # track contact must be stable this long
 HOOK_DEBOUNCE_MS = 80     # hooks swing when the wand is hung, so debounce longer
-FAULT_LOCKOUT_MS = 1000   # after a fault, ignore further contacts for this long
 MIN_RUN_MS = 1500         # ignore an end-hook contact in the first 1.5 s of a run
 CONFIG_POLL_S = 30        # refresh the score formula from the backend
 SESSION_POLL_S = 1        # check whether a game was started/aborted
+SESSION_POLL_RUNNING_S = 4  # poll less during a run: each HTTPS call stalls the Pico briefly
+
+# ---- Touch sensitivity -------------------------------------------------------- #
+# A hardware interrupt latches even a split-millisecond brush of the track, so touches are
+# caught while the Pico is busy with Wi-Fi/TLS. The values below decide what counts as a
+# *separate* touch, which keeps the game fun (no beep storms) without dropping real touches.
+TRACK_IRQ = True          # latch brief brushes with a pin interrupt (False = polling only)
+TRACK_RELEASE_MS = 120    # wand must be off the track this long before the next touch is new
+FAULT_LOCKOUT_MS = 350    # minimum gap between two faults; a re-touch inside it is counted
+                          # when the gap ends, never dropped
+HOLD_REPEAT_MS = 1500     # dragging along the track adds a fault every 1.5 s (0 = off)
 
 # ---- Score (console preview only; the backend owns the official score) ------- #
 # score = SCORE_BASE - SCORE_PER_SECOND * seconds - SCORE_PER_FAULT * faults, minimum 0

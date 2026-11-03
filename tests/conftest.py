@@ -39,9 +39,16 @@ def client():
     import helpers
     from main import app
 
+    helpers.settings.game_settings_path.unlink(missing_ok=True)
+    media_dir = helpers.settings.media_dir_resolved
+    if media_dir.exists():  # drop sounds uploaded by earlier tests
+        for f in media_dir.iterdir():
+            if f.name != helpers.settings.default_media:
+                f.unlink()
     with TestClient(app) as c:
         c.headers["X-API-Key"] = API_KEY
         helpers.state.session = None
+        helpers.state.reset_sounds()
         helpers.get_board().clear()
         yield c
         helpers.state.session = None
@@ -60,6 +67,9 @@ class LiveBackend:
 
     def reset(self):
         self.http.delete("/api/v1/session").raise_for_status()
+        self.http.post("/api/v1/config", json={
+            "current_media_file": "chime.wav", "penalty_media_file": "", "penalty_threshold": 3,
+        }).raise_for_status()
         self.http.delete("/api/v1/leaderboard").raise_for_status()
 
 

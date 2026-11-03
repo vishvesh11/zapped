@@ -47,9 +47,47 @@
               <select id="media-file" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none"></select>
             </label>
 
-            <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 font-bold text-white hover:bg-blue-700">
-              Apply settings
-            </button>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <label class="block text-sm sm:col-span-2">
+                <span class="mb-2 block">Penalty sound</span>
+                <select id="penalty-file" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none"></select>
+              </label>
+              <label class="block text-sm">
+                <span class="mb-2 block">Play after more than</span>
+                <div class="flex items-center gap-2">
+                  <input id="penalty-threshold" type="number" min="0" max="100" step="1" value="3"
+                         class="w-20 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 focus:border-blue-500 focus:outline-none">
+                  <span class="text-slate-600">touches</span>
+                </div>
+              </label>
+            </div>
+            <p id="penalty-summary" class="text-xs text-slate-600"></p>
+
+            <div class="flex flex-wrap gap-3">
+              <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 font-bold text-white hover:bg-blue-700">
+                Apply settings
+              </button>
+              <button id="preview-chime" type="button" onclick="previewSound('media-file')"
+                      class="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700 hover:bg-slate-200">▶ Preview chime</button>
+              <button id="preview-penalty" type="button" onclick="previewSound('penalty-file')"
+                      class="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700 hover:bg-slate-200 disabled:opacity-40">▶ Preview penalty</button>
+            </div>
+          </form>
+
+          <form id="upload-form" class="mt-6 space-y-3 border-t border-slate-200 pt-4">
+            <h3 class="text-sm font-semibold">Upload a sound</h3>
+            <p class="text-xs text-slate-600">WAV, OGG or MP3, up to 5 MB. Uploading a file with an existing name replaces it.</p>
+            <input id="upload-file" type="file" accept=".wav,.ogg,.mp3,audio/wav,audio/ogg,audio/mpeg"
+                   class="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-slate-700 hover:file:bg-slate-200">
+            <div class="flex flex-wrap items-center gap-3">
+              <select id="upload-use-as" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900">
+                <option value="penalty">Use as penalty sound</option>
+                <option value="chime">Use as chime</option>
+                <option value="">Just add to library</option>
+              </select>
+              <button id="upload-btn" type="submit"
+                      class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:opacity-40">Upload</button>
+            </div>
           </form>
 
           <div class="mt-6 border-t border-slate-200 pt-4">
@@ -167,6 +205,7 @@
     let scorePerSecond = 5;
     let scorePerFault = 50;
     let configLoaded = false;
+    let currentConfig = null;
     let session = null;
     let audioUnlocked = false;
     let chimeAudioUrl = new URL('/public/media/chime.wav', backendUrl).href;
@@ -287,29 +326,96 @@
         backendUrl
       ).href;
       chime.src = chimeAudioUrl;
-      const currentChoice = config.current_media_file;
-      loadMedia(currentChoice);
+      currentConfig = config;
+      document.getElementById('penalty-threshold').value = config.penalty_threshold;
+      renderPenaltySummary();
+      loadMedia();
     }
 
-    async function loadMedia(currentChoice) {
+    function renderPenaltySummary() {
+      const el = document.getElementById('penalty-summary');
+      if (!currentConfig) return;
+      el.textContent = currentConfig.penalty_media_file
+        ? `Touches 1–${currentConfig.penalty_threshold} play “${currentConfig.current_media_file}”; ` +
+          `from touch ${currentConfig.penalty_threshold + 1} on, every touch plays “${currentConfig.penalty_media_file}”.`
+        : 'No penalty sound selected: every touch plays the chime.';
+    }
+
+    function fillSelect(select, files, current, noneLabel) {
+      const options = [...files];
+      if (current && !options.includes(current)) options.unshift(current);
+      select.replaceChildren();
+      if (noneLabel !== undefined) {
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = noneLabel;
+        select.appendChild(none);
+      }
+      options.forEach(file => {
+        const option = document.createElement('option');
+        option.value = file;
+        option.textContent = file;
+        select.appendChild(option);
+      });
+      select.value = current || '';
+    }
+
+    async function loadMedia() {
       try {
         const result = await api('/media');
-        const select = document.getElementById('media-file');
         const files = result.files || [];
-        if (currentChoice && !files.includes(currentChoice)) files.unshift(currentChoice);
-        select.replaceChildren();
-        files.forEach(file => {
-          const option = document.createElement('option');
-          option.value = file;
-          option.textContent = file;
-          select.appendChild(option);
-        });
-        if (currentChoice && files.includes(currentChoice)) select.value = currentChoice;
-        select.disabled = files.length === 0;
+        const cfg = currentConfig || {};
+        const chimeSelect = document.getElementById('media-file');
+        fillSelect(chimeSelect, files, cfg.current_media_file);
+        chimeSelect.disabled = files.length === 0;
+        fillSelect(document.getElementById('penalty-file'), files, cfg.penalty_media_file,
+                   '— none (always play the chime) —');
+        document.getElementById('preview-penalty').disabled = !cfg.penalty_media_file;
       } catch (error) {
         showMessage(error.message);
       }
     }
+
+    document.getElementById('penalty-file').addEventListener('change', event => {
+      document.getElementById('preview-penalty').disabled = !event.target.value;
+    });
+
+    function previewSound(selectId) {
+      const name = document.getElementById(selectId).value;
+      if (!name) return;
+      const audio = new Audio(new URL('/public/media/' + encodeURIComponent(name), backendUrl).href);
+      audio.play().catch(error => showMessage('Preview failed: ' + error.message));
+    }
+
+    document.getElementById('upload-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const file = document.getElementById('upload-file').files[0];
+      if (!file) {
+        showMessage('Choose a WAV, OGG or MP3 file to upload.');
+        return;
+      }
+      const useAs = document.getElementById('upload-use-as').value;
+      const button = document.getElementById('upload-btn');
+      button.disabled = true;
+      try {
+        const result = await api(
+          '/media/' + encodeURIComponent(file.name) + (useAs ? '?use_as=' + useAs : ''),
+          { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } }
+        );
+        renderConfig(result.config);
+        document.getElementById('upload-file').value = '';
+        showMessage(
+          `Uploaded ${result.filename}` +
+          (useAs === 'penalty' ? ' and set it as the penalty sound.' :
+           useAs === 'chime' ? ' and set it as the chime.' : '.'),
+          'success'
+        );
+      } catch (error) {
+        showMessage('Upload failed: ' + error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     async function loadConfig() {
       renderConfig(await api('/config'));
@@ -321,7 +427,9 @@
         const config = await api('/config', {
           method: 'POST',
           body: JSON.stringify({
-            current_media_file: document.getElementById('media-file').value
+            current_media_file: document.getElementById('media-file').value,
+            penalty_media_file: document.getElementById('penalty-file').value,
+            penalty_threshold: parseInt(document.getElementById('penalty-threshold').value, 10)
           })
         });
         renderConfig(config);

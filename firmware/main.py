@@ -58,7 +58,81 @@ class StableInput:
         return False
 
 
-track = StableInput(config.TRACK_PIN, config.DEBOUNCE_MS)
+class TrackSensor:
+    """Wand-on-track detector tuned not to miss brief brushes.
+
+    A brush can be shorter than one scan, and the event loop stalls for a while during
+    DNS/TLS work. A hard IRQ on the falling edge latches every contact regardless, and
+    the game loop also looks at the live pin level for contacts that are being held.
+    """
+
+    def __init__(self, pin_no):
+        self.pin = Pin(pin_no, Pin.IN, Pin.PULL_UP)
+        self._hit = False
+        if config.TRACK_IRQ:
+            try:
+                self.pin.irq(handler=self._irq, trigger=Pin.IRQ_FALLING, hard=True)
+            except Exception as exc:
+                log("track IRQ unavailable (%r); using polling only" % exc)
+
+    def _irq(self, _pin):
+        self._hit = True  # hard IRQ: no allocation allowed, just set a flag
+
+    def clear(self):
+        self._hit = False
+
+    def contact(self):
+        """True if the wand touched the track since the last call or is touching it now."""
+        hit = self._hit
+        self._hit = False
+        return hit or self.pin.value() == 0
+
+
+class TouchCounter:
+    """Turns raw track contact into faults.
+
+    - A new touch starts once the wand has been off the track for TRACK_RELEASE_MS, so
+      contact chatter while scraping counts once.
+    - Faults are at least FAULT_LOCKOUT_MS apart; a new touch inside that gap is owed and
+      counted when it ends instead of being dropped.
+    - Holding/dragging along the track adds a fault every HOLD_REPEAT_MS.
+    """
+
+    def __init__(self):
+        self.reset(time.ticks_ms())
+
+    def reset(self, now):
+        self.touching = False
+        self.owed = False
+        self.last_contact = now
+        self.last_fault = time.ticks_add(now, -config.FAULT_LOCKOUT_MS)
+        self.hold_since = now
+
+    def update(self, contact, now):
+        """Return True when a fault should be counted on this scan."""
+        if contact:
+            self.last_contact = now
+            if not self.touching:
+                self.touching = True
+                self.hold_since = now
+                self.owed = True
+        elif self.touching and time.ticks_diff(now, self.last_contact) >= config.TRACK_RELEASE_MS:
+            self.touching = False
+
+        if (config.HOLD_REPEAT_MS and self.touching and not self.owed
+                and time.ticks_diff(now, self.hold_since) >= config.HOLD_REPEAT_MS):
+            self.owed = True
+
+        if self.owed and time.ticks_diff(now, self.last_fault) >= config.FAULT_LOCKOUT_MS:
+            self.owed = False
+            self.last_fault = now
+            self.hold_since = now
+            return True
+        return False
+
+
+track = TrackSensor(config.TRACK_PIN)
+touches = TouchCounter()
 start_hook = StableInput(config.START_HOOK_PIN, config.HOOK_DEBOUNCE_MS)
 end_hook = StableInput(config.END_HOOK_PIN, config.HOOK_DEBOUNCE_MS)
 
@@ -213,6 +287,8 @@ def begin_run():
     state.phase = RUNNING
     state.run_start_ms = time.ticks_ms()
     state.faults = 0
+    track.clear()           # brushes while carrying the wand to START don't count
+    touches.reset(state.run_start_ms)
     log("RUN STARTED - timer running")
     asyncio.create_task(beep(1, 80, 1500))
     asyncio.create_task(report_run_start())
@@ -235,25 +311,32 @@ async def report_run_start():
     log("could not tell backend the run started (timer still runs locally)")
 
 
-async def handle_fault():
-    if state.phase != RUNNING:
-        return
+def count_fault():
+    """Count a fault synchronously (so it can't be lost to a same-scan finish) and report it."""
     state.faults += 1
     log("FAULT #%d" % state.faults)
     asyncio.create_task(beep(1, 150, 2000))
-    if state.touch_busy:
-        return  # the running report (or the final result) carries the newer count
+    if not state.touch_busy:
+        asyncio.create_task(report_touches(state.session_id))
+
+
+async def report_touches(sid):
+    """Tell the backend about touches (chime + photo). Faults that arrive while a report is
+    in flight are sent in a follow-up report; the final result carries the exact count anyway."""
     state.touch_busy = True
+    reported = 0
     try:
-        status, data = await call("POST", "/api/v1/event/touch", {
-            "device_id": config.DEVICE_ID,
-            "session_id": state.session_id,
-            "fault_count": state.faults,
-            "uptime_ms": time.ticks_ms(),
-        })
-        note_backend(status == 200 and isinstance(data, dict))
+        while state.phase == RUNNING and state.session_id == sid and state.faults > reported:
+            reported = state.faults
+            status, data = await call("POST", "/api/v1/event/touch", {
+                "device_id": config.DEVICE_ID,
+                "session_id": sid,
+                "fault_count": reported,
+                "uptime_ms": time.ticks_ms(),
+            })
+            note_backend(status == 200 and isinstance(data, dict))
     except Exception as exc:
-        print("handle_fault:", repr(exc))
+        print("report_touches:", repr(exc))
     finally:
         state.touch_busy = False
 
@@ -298,10 +381,9 @@ async def send_pending():
 # Tasks
 # --------------------------------------------------------------------------- #
 async def game_task():
-    lockout_until = time.ticks_ms()
     while True:
         try:
-            track_changed = track.update()
+            contact = track.contact()
             start_hook.update()
             end_hook.update()
 
@@ -318,10 +400,9 @@ async def game_task():
 
             elif state.phase == RUNNING:
                 now = time.ticks_ms()
-                if track_changed and track.engaged and time.ticks_diff(now, lockout_until) >= 0:
-                    lockout_until = time.ticks_add(now, config.FAULT_LOCKOUT_MS)
-                    asyncio.create_task(handle_fault())
-                elif end_hook.engaged and time.ticks_diff(now, state.run_start_ms) >= config.MIN_RUN_MS:
+                if touches.update(contact, now):
+                    count_fault()
+                if end_hook.engaged and time.ticks_diff(now, state.run_start_ms) >= config.MIN_RUN_MS:
                     finish_run()
         except Exception as exc:
             print("game_task:", repr(exc))
@@ -349,7 +430,8 @@ async def session_task():
             await send_pending()
         except Exception as exc:
             print("session_task:", repr(exc))
-        await asyncio.sleep(config.SESSION_POLL_S)
+        await asyncio.sleep(config.SESSION_POLL_RUNNING_S if state.phase == RUNNING
+                            else config.SESSION_POLL_S)
 
 
 async def watchdog_task(wdt):
