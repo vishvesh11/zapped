@@ -5,12 +5,20 @@ supplied through environment variables (or a local ``.env`` file) and validated
 once at import time.
 """
 from pathlib import Path
-from typing import Set
+from typing import List, Set
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent
+
+# Competencies/teams offered in the admin panel. Players can also type their own.
+DEFAULT_TEAMS = [
+    "Data Science", "AI / ML", "Software Engineering", "Cloud & DevOps", "Cybersecurity",
+    "QA & Testing", "IT Support", "Product Management", "Design / UX", "Data Engineering",
+    "HR", "Finance", "Sales", "Marketing", "Operations", "Customer Success", "Legal",
+    "Admin & Facilities", "Leadership",
+]
 
 
 class Settings(BaseSettings):
@@ -46,6 +54,9 @@ class Settings(BaseSettings):
     s3_bucket: str = Field(default="buzzwire-zaps", alias="S3_BUCKET")
     s3_access_key: str = Field(default="", alias="S3_ACCESS_KEY")
     s3_secret_key: str = Field(default="", alias="S3_SECRET_KEY")
+
+    # ---- Teams ------------------------------------------------------------ #
+    teams: List[str] = Field(default_factory=lambda: list(DEFAULT_TEAMS), alias="TEAMS")
 
     # ---- Score formula ---------------------------------------------------- #
     score_base: float = Field(default=1000.0, alias="SCORE_BASE")
